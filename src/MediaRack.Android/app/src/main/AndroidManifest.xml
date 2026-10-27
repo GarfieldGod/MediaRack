@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 网络源要用；只用本地源的话不需要，但无害 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 扫码配对（zxing-embedded 自带权限请求流程） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 下载：前台服务保活 + 进度通知（dataSync 类型，Android 14+ 要求显式权限） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".MediaRackApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MediaRack"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.MediaRack">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            扫码配对页：继承 zxing 的 CaptureActivity，但**自己声明竖屏**。
+            库自带那条声明是 sensorLandscape——竖着拿手机也是横屏，且横屏时取景框
+            被算成扁长方形。这里改成新类名单独声明 portrait，就不必 tools:replace 去
+            跟库抢同一个 activity 节点。
+        -->
+        <activity
+            android:name=".ui.feed.QrScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:clearTaskOnLaunch="true"
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
+        <!-- 下载前台服务：保活 + 通知进度，本体在 DownloadRepository -->
+        <service
+            android:name=".core.download.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+
+</manifest>

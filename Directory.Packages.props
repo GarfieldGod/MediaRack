@@ -1,0 +1,54 @@
+<Project>
+
+  <!--
+    中央包版本管理（CPM）。开了这个之后，各 csproj 里的 <PackageReference> 只写包名、
+    不写版本，版本一律在这里改一处生效。
+
+    为什么值得做：MediaRack 有 5 个 .NET 项目，同一个包会在多处出现
+    （Avalonia 4 个包只在 Client，但测试项目两处都要 xunit 全家桶）。历史上
+    Avalonia 在 Desktop 和 Client 各写一遍版本号，改的时候很容易只改一处，
+    然后得到一个"两个项目用不同 Avalonia"的诡异构建结果——这种漂移不会报错，
+    只会在运行期以奇怪的方式炸。
+
+    不开 CentralPackageTransitivePinningEnabled：
+    传递依赖的版本交给 NuGet 自己的最小适用版本规则。钉死传递依赖会让
+    "升级一个包"变成"要同时改五处"，反而更重。
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="UI（客户端）">
+    <PackageVersion Include="Avalonia" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Fonts.Inter" Version="12.1.4" />
+    <PackageVersion Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
+  </ItemGroup>
+
+  <ItemGroup Label="播放引擎（客户端）">
+    <!--
+      LibVLCSharp 与原生库是**成对**的：LibVLCSharp 3.10 对应 libvlc 3.0.x。
+      升级其中一半会得到 EntryPointNotFoundException，所以放同一组里一起改。
+      三个平台包按 RuntimeIdentifier 条件引用，同时只有一个会进构建。
+    -->
+    <PackageVersion Include="LibVLCSharp.Avalonia" Version="3.10.2" />
+    <PackageVersion Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
+    <PackageVersion Include="VideoLAN.LibVLC.Mac" Version="3.0.24" />
+    <PackageVersion Include="VideoLAN.LibVLC.Linux" Version="3.0.24" />
+  </ItemGroup>
+
+  <ItemGroup Label="服务端 / 核心">
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.13" />
+    <PackageVersion Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="测试">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.13" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+</Project>

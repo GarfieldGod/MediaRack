@@ -1,0 +1,21 @@
+-- MediaRack — schema v7
+-- 主题：合集归属 override（"移动到合集" + 随内容指纹走）。
+--
+-- 背景：合集本条是物理结构的投影（single=目录、dual=UP 主），
+-- CollectionRebuilder 每次扫描无条件回填 media.collection_id，
+-- 手动改归属必被打回 —— "移动到合集"因此一直做不了。
+--
+-- 方案：media_meta 加 collection 列，作为条目"随身卡片"的一个字段：
+--   - 用户手动移动到某合集 → 写 override 键；
+--   - Rebuilder 回填后再跑一段 override 段：卡片上有归属且解析出的合集
+--     真实存在 → 覆盖投影结果；否则保持文件夹/UP 投影（约定的兜底语义）；
+--   - 内容指纹迁移（FingerprintSync.CopyMeta）整行复制时自动带上，
+--     视频"整理文件夹"后归属跟着内容走。
+--
+-- 键格式（去源化，应用时拼上条目当前所在 sourceId，跨源重加也能认回）：
+--   dir:/相对目录     → 解析为 dir:{sid}:/{relDir}（RootFolderId 形态 dir:{sid}:/ 亦然）
+--   up:{mid}          → 解析为 up:{sid}:{mid}
+--   custom:{名字}     → 解析为 custom:{sid}:{名字}（手动合集，Rebuilder 按引用按需建行）
+-- NULL / 空串 = 未手动指定（清除 override）→ 跟随投影。
+
+ALTER TABLE media_meta ADD COLUMN collection TEXT;

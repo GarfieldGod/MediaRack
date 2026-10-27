@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaRack</title>
+<!-- 全部用相对路径：库页挂在 /s/{源标识}/ 下，绝对路径 /style.css 会越过前缀打到根
+     （根是管理页，远端请求根本进不来），表现为页面白屏。 -->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     库页：只在 /s/{源标识}/ 下出现
+     ══════════════════════════════════════════════════════════ -->
+<div id="library-shell" hidden>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong id="brand-name">MediaRack</strong>
+  </div>
+
+  <button id="btn-menu" class="btn ghost menu-btn" aria-label="打开源与合集">源 / 合集</button>
+
+  <input id="search" class="search" type="search" placeholder="搜索标题 / UP 主 / 路径" autocomplete="off">
+
+  <div class="topbar-actions">
+    <label class="check" title="隐藏只影响视图，磁盘不变">
+      <input id="chk-hidden" type="checkbox">
+      <span>显示已隐藏</span>
+    </label>
+    <label class="check" title="缺失 = 文件已不在源文件夹里；条目保留用于恢复档案，默认不显示">
+      <input id="chk-missing" type="checkbox">
+      <span>显示缺失</span>
+    </label>
+    <button id="btn-aggregate" class="btn ghost active" title="切回「全部视频」聚合视图">全部视频</button>
+    <button id="btn-multiselect" class="btn ghost" title="进入多选模式，勾选卡片做批量操作">多选</button>
+    <button id="btn-scan" class="btn">扫描</button>
+  </div>
+</header>
+
+<div id="sidebar-scrim" class="scrim" hidden></div>
+
+<main class="layout">
+
+  <aside class="sidebar" id="sidebar">
+    <section>
+      <h2>源</h2>
+      <ul id="source-list" class="list"></ul>
+    </section>
+
+    <section>
+      <h2>合集</h2>
+      <ul id="collection-list" class="list"></ul>
+    </section>
+
+    <section>
+      <h2>收藏夹</h2>
+      <ul id="favorite-list" class="list"></ul>
+    </section>
+
+    <!-- 只在抽屉里出现：手机上顶栏放不下这段文字，只留一个没有说明的复选框更糟。 -->
+    <section class="drawer-only">
+      <h2>视图</h2>
+      <label class="check">
+        <input id="chk-hidden-m" type="checkbox">
+        <span>显示已隐藏</span>
+      </label>
+      <label class="check">
+        <input id="chk-missing-m" type="checkbox">
+        <span>显示缺失</span>
+      </label>
+    </section>
+
+    <section id="health-box" class="health"></section>
+  </aside>
+
+  <section class="content">
+    <div id="crumbs" class="crumbs"></div>
+    <!-- 只在多选模式下出现（[hidden] 必须配 CSS 显式规则，否则会被 .batch-bar 的 display:flex 覆盖） -->
+    <div id="batch-toolbar" class="batch-bar" hidden>
+      <span id="batch-count" class="batch-count">已选 0 条</span>
+      <button id="btn-select-page" class="btn ghost tiny">全选本页</button>
+      <button id="btn-batch-open" class="btn tiny" disabled>批量操作</button>
+      <span class="batch-spacer"></span>
+      <button id="btn-batch-exit" class="btn ghost tiny">退出多选</button>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty" hidden></div>
+    <div class="pager">
+      <button id="btn-prev" class="btn ghost">上一页</button>
+      <span id="page-info" class="muted"></span>
+      <button id="btn-next" class="btn ghost">下一页</button>
+    </div>
+  </section>
+
+</main>
+
+<!-- 详情 / 编辑 -->
+<div id="dialog-detail" class="overlay" hidden>
+  <div class="dialog wide">
+    <div class="detail-head">
+      <h3 id="detail-title">—</h3>
+      <button type="button" class="btn ghost tiny" data-close>关闭</button>
+    </div>
+
+    <div class="detail-body">
+      <div class="detail-meta" id="detail-facts"></div>
+
+      <div class="detail-form">
+        <label>标题
+          <input id="edit-title" placeholder="留空恢复源端标题">
+        </label>
+        <label>标签（逗号分隔）
+          <input id="edit-tags" placeholder="风景, 4K">
+        </label>
+        <label class="row">
+          <input id="edit-hidden" type="checkbox">
+          <span>隐藏（只影响视图，磁盘不变）</span>
+        </label>
+
+        <div class="dialog-actions">
+          <button type="button" class="btn ghost" id="btn-play">播放</button>
+          <button type="button" class="btn" id="btn-save">保存</button>
+        </div>
+        <p id="detail-note" class="hint"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 播放 -->
+<div id="dialog-play" class="overlay" hidden>
+  <div class="player">
+    <div class="player-head">
+      <span id="play-title" class="player-title">—</span>
+      <button type="button" class="btn ghost tiny" data-close>关闭</button>
+    </div>
+    <video id="video" controls playsinline></video>
+    <p class="hint" id="play-hint"></p>
+  </div>
+</div>
+<!-- 批量操作面板：多选模式下由「批量操作」按钮打开，操作点击后立即生效 -->
+<div id="dialog-batch" class="overlay" hidden>
+  <div class="dialog">
+    <div class="detail-head">
+      <h3>批量操作 <span id="batch-dialog-count" class="batch-count"></span></h3>
+      <button type="button" class="btn ghost tiny" data-close>关闭</button>
+    </div>
+
+    <div class="batch-actions">
+      <div class="batch-group">
+        <span class="batch-label">旋转</span>
+        <button type="button" class="btn tiny" data-rotate="90">90°</button>
+        <button type="button" class="btn tiny" data-rotate="180">180°</button>
+        <button type="button" class="btn tiny" data-rotate="270">270°</button>
+        <button type="button" class="btn tiny" data-rotate="0">复位</button>
+      </div>
+      <div class="batch-group">
+        <span class="batch-label">隐藏</span>
+        <button type="button" class="btn tiny" id="btn-batch-hide">隐藏</button>
+        <button type="button" class="btn tiny" id="btn-batch-unhide">取消隐藏</button>
+      </div>
+      <div class="batch-group">
+        <span class="batch-label">合集</span>
+        <select id="batch-collection" class="input"></select>
+        <input id="batch-new-collection" class="input" placeholder="或新建合集…" style="width:130px">
+        <button type="button" class="btn tiny" id="btn-batch-move">移动</button>
+        <button type="button" class="btn ghost tiny" id="btn-batch-auto" title="清除手动归属，回到按文件夹/UP主自动归类">恢复自动</button>
+      </div>
+    </div>
+
+    <p class="hint">操作点击后立即生效。旋转可随时「复位」，隐藏的条目在勾选「显示已隐藏」后可以找回；合集归属跟着内容走——文件移动、改名后依然保留。</p>
+  </div>
+</div>
+
+</div><!-- /library-shell -->
+
+<!-- ══════════════════════════════════════════════════════════
+     管理页：只在根路径出现，且只对本机开放
+     ══════════════════════════════════════════════════════════ -->
+<div id="admin-shell" hidden>
+
+<header class="topbar admin-topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong id="admin-brand">MediaRack</strong>
+    <span class="brand-tag">管理控制台</span>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-admin-reload" class="btn ghost">刷新</button>
+    <button id="btn-purge-missing" class="btn ghost" title="只删既没有档案也没有收藏的缺失条目">清理缺失</button>
+    <button id="btn-new-source" class="btn">新建源</button>
+  </div>
+</header>
+
+<main class="admin-layout">
+  <aside class="admin-side">
+    <h2>源</h2>
+    <ul id="admin-source-list" class="src-list"></ul>
+    <p id="admin-side-hint" class="hint"></p>
+  </aside>
+  <section class="admin-main">
+    <!-- 统计条的口径标签：上方四张卡是"当前源"还是"全部源"，写清楚比让人猜强。
+         之前这四张卡恒为全服务器口径，站在某个源里看到的是全库数字，很误导。 -->
+    <div id="admin-scope" class="admin-scope" hidden></div>
+    <div id="admin-stats" class="admin-stats" hidden></div>
+    <div id="admin-detail">
+      <div class="empty">选择左侧的源，或新建一个。</div>
+    </div>
+  </section>
+</main>
+
+<!-- 新建源 -->
+<div id="dialog-new-source" class="overlay" hidden>
+  <form class="dialog" id="form-new-source">
+    <h3>新建源</h3>
+    <p class="hint">三项都可留空自动生成；建好后在源详情里添加文件夹。</p>
+
+    <label>名称
+      <input name="name" placeholder="留空则用源标识当名称">
+    </label>
+    <label>源标识
+      <input name="slug" placeholder="留空则自动生成">
+    </label>
+    <label>访问令牌
+      <input name="token" placeholder="留空则自动生成">
+    </label>
+    <p class="hint" id="new-source-note"></p>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>取消</button>
+      <button type="submit" class="btn">创建</button>
+    </div>
+  </form>
+</div>
+
+<!-- 删除源：不可撤销，所以单独一个弹层，且默认<不>连档案一起删 -->
+<div id="dialog-delete-source" class="overlay" hidden>
+  <div class="dialog">
+    <div class="detail-head">
+      <h3>删除源「<span id="del-name">—</span>」</h3>
+      <button type="button" class="btn ghost tiny" data-close>关闭</button>
+    </div>
+
+    <p class="hint" id="del-summary"></p>
+
+    <label class="check del-check">
+      <input id="del-with-archive" type="checkbox">
+      <span>连档案一起删（旋转、进度、标题、标签、合集归属、收藏）</span>
+    </label>
+
+    <p class="hint">
+      不勾选时：只删「源登记 + 文件夹 + 该源条目」，档案与收藏留在库里。
+      文件搬回原处（key 不变）会自动生效；搬到别处或以后重新加源，靠内容指纹认回来。
+    </p>
+    <p class="hint"><strong>磁盘上的视频文件从头到尾不会被删除。</strong></p>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>取消</button>
+      <button type="button" class="btn danger" id="btn-del-confirm">删除源</button>
+    </div>
+  </div>
+</div>
+
+<!-- 二维码 -->
+<div id="dialog-qr" class="overlay" hidden>
+  <div class="dialog">
+    <div class="detail-head">
+      <h3 id="qr-title">配对二维码</h3>
+      <button type="button" class="btn ghost tiny" data-close>关闭</button>
+    </div>
+    <div class="pair-body">
+      <img id="qr-img" alt="配对二维码" width="220" height="220">
+      <div class="pair-side">
+        <p class="hint" id="qr-url"></p>
+        <p class="hint">一张码包含全部候选地址，手机扫码后自动选可连通的。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /admin-shell -->
+
+<!-- 扫描任务面板：右下角，列出全部活动/刚结束的任务。
+     扫描支持并发（按磁盘排队，同盘自动排队），所以是任务列表而不是单进度条。
+     两个页面共用，挂在 shell 外面；刷新页面后靠 GET /api/v1/scan 找回。 -->
+<div id="scan-panel" class="scan-panel" hidden>
+  <div class="scan-panel-head">扫描任务</div>
+  <div id="scan-jobs"></div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- 登录：服务端配了令牌才会出现 -->
+<div id="login" class="overlay login" hidden>
+  <form class="dialog" id="form-login">
+    <h3>需要访问令牌</h3>
+    <p class="hint">
+      这个库设了访问令牌。输入一次即可：本机会记住（存 localStorage），
+      服务端另发一个 HttpOnly cookie 给封面和视频流用——那些请求带不了自定义头。
+    </p>
+
+    <label>令牌
+      <input id="login-token" type="password" autocomplete="current-password" required>
+    </label>
+
+    <p id="login-note" class="hint"></p>
+
+    <div class="dialog-actions">
+      <button type="submit" class="btn">进入</button>
+    </div>
+  </form>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

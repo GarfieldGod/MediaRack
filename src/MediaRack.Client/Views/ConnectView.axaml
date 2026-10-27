@@ -1,0 +1,62 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:MediaRack.Client.ViewModels"
+             xmlns:storage="clr-namespace:MediaRack.Client.Storage"
+             x:Class="MediaRack.Client.Views.ConnectView"
+             x:DataType="vm:ConnectViewModel">
+
+    <ScrollViewer Padding="28">
+        <StackPanel Spacing="12" MaxWidth="680">
+
+            <TextBlock Text="连接到 MediaRack 服务端" FontSize="22" FontWeight="SemiBold" />
+            <TextBlock TextWrapping="Wrap" Opacity="0.7">
+                粘贴服务端「配对二维码」的内容（扫码软件复制出来的那串），或直接输入地址。
+                配对码会自带令牌和多个候选地址，客户端自动挑一个能连上的。
+            </TextBlock>
+
+            <TextBlock Text="地址 / 配对码" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <TextBox Text="{Binding Input}"
+                     PlaceholderText="MR1|{&quot;token&quot;:...}   或   http://192.168.1.10:8080/s/movie"
+                     AcceptsReturn="False" />
+
+            <TextBlock Text="令牌" FontWeight="SemiBold" />
+            <TextBox Text="{Binding Token}"
+                     PlaceholderText="扫码时自动填写；服务端没设密码可以留空" />
+
+            <Button Content="连接"
+                    Command="{Binding ConnectCommand}"
+                    HorizontalAlignment="Left"
+                    Padding="20,8"
+                    Classes="accent" />
+
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Opacity="0.8"
+                       IsVisible="{Binding !IsError}" />
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#E5484D"
+                       IsVisible="{Binding IsError}" />
+
+            <TextBlock Text="已保存的服务端" FontWeight="SemiBold" Margin="0,14,0,0" />
+            <ItemsControl ItemsSource="{Binding Saved}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="storage:ServerEntry">
+                        <Border BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                                BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,8">
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding BaseUrl}" FontSize="12" Opacity="0.6" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="连接" Margin="8,0"
+                                        Command="{Binding $parent[ItemsControl].DataContext.ConnectSavedCommand}"
+                                        CommandParameter="{Binding}" />
+                                <Button Grid.Column="2" Content="删除"
+                                        Command="{Binding $parent[ItemsControl].DataContext.RemoveSavedCommand}"
+                                        CommandParameter="{Binding}" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

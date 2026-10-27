@@ -1,0 +1,372 @@
+# MediaRack 设计
+
+> 只讲**当前有效**的设计与不变量。
+>
+> 怎么跑、产物在哪 → [../README.md](../README.md)
+
+## 1. 定位
+
+多源视频库与播放器。统一抽象是**源**：B 站缓存（双流 fMP4）与普通视频文件（单流）都是源，
+PC 与手机共用一套库、一套协议。
+
+| | |
+|---|---|
+| 是 | 媒体库、播放器、源管理、虚拟元数据 |
+| 不是 | B 站专用工具（bilibili 只是 `layout=dual` 的一种实现） |
+| 不做 | 弹幕渲染（`danmaku.xml` 只登记存在性）、评论、账号体系 |
+
+**三条不可让渡的规则**
+
+1. **磁盘永不可写** —— 源目录只读，不重命名、不移动、不删除、不建任何文件（含元数据目录）。没有例外、没有开关。
+2. **源独立** —— 一切条目以 `(source_id, key)` 标识；去重只发生在「全部视频」聚合视图。
+3. **离线只读** —— 写操作一律要求在线；不存在 outbox、离线队列、冲突合并。
+
+## 2. 核心模型
+
+### 2.1 三层
+
+```
+Source    内容供给，只读。双流目录 / 单流目录
+            │  scan() -> List<MediaEntry>
+            ▼
+Library   视图层，可写。单源视图 / 聚合视图 + 虚拟元数据
+            │  resolve(key) -> MediaRef(tracks[], base)
+            ▼
+Player    播放器。1 条轨走单流，2 条轨走双流合成；不关心 file:// 还是 http://
+```
+
+### 2.2 部署：星型直连，没有中继
+
+1. 服务端**只索引本地目录**，不转发别的服务端的流
+2. 客户端可同时连任意多个服务端，每个都是直连
+
+因此不存在「手机 → PC → 上游」的双跳，也就不需要 `advertise_base` 之类的协商。
+
+### 2.3 播放：一个 URI 抽象覆盖全部场景
+
+`MediaRef(tracks: List<Uri>, base: LOCAL | REMOTE)`。「在家/在外」「单流/双流」都不是代码分支，
+只是两个字段：`LOCAL` 用本地 DataSource，`REMOTE` 用 HTTP DataSource；1 条轨直接播，
+2 条轨 `MergingMediaSource` 合成。
+
+## 3. 源
+
+### 3.1 两种布局
+
+| `layout` | 结构 | 元数据来源 | 身份键 |
+|---|---|---|---|
+| `dual` | `<avid>/c_<cid>/<tag>/{video,audio}.m4s` + `entry.json` | `entry.json` | `<avid>_c<cid>` |
+| `single` | 任意层级的视频文件 | 文件名 + ffprobe | `s_<sha1(相对路径)[:16]>` |
+
+`single` 源没有全局内容身份，**无法跨源去重**：同一视频放在两个目录算两条。这是普通文件格式的本质缺陷，接受。
+
+`--layout auto`（默认）有 `entry.json` 判 dual，否则 single。误判成本极低：dual 目录按 single 扫只会得 0 条。
+
+### 3.2 写权限：只有虚拟层
+
+磁盘层面没有写路径。唯一可配置维度是**虚拟写权限**——服务端视野上是否允许改展示信息：
+
+| `virtualWrite` | 允许改 | 场景 |
+|---|---|---|
+| `none` | 什么都不许（客户端只能存本地覆盖） | 别人分享的只读源 |
+| `whitelist` | `tags` / `collection` / `hidden` / `rotation` / `play_pos`；标题与 UP 名锁定 | 公共库，防误改原始信息 |
+| `full` | 全部虚拟字段（仍然只写库） | 自己的库 |
+
+### 3.3 视图与去重
+
+| 视图 | 去重 | 说明 |
+|---|---|---|
+| 单源 | 否 | 源内不会出现同 key 重复（dual 源一个 cid 一个目录） |
+| 聚合（全部视频） | 是 | 按 `key` 合并，标注 `LOCAL` / `REMOTE` / `BOTH` |
+
+某源不可达 → 条目灰度显示并给出原因，**不删除记录**。
+
+### 3.4 合集（源级结构层）
+
+合集是媒体的**投影**，不是用户的组织：
+
+| 源 | 合集 = |
+|---|---|
+| `single` | 物理目录（含祖先闭包：`A/B/ep1.mp4` 使 `A` 与 `A/B` 都成为合集；没有直接视频的目录不算合集） |
+| `dual` | UP 主 |
+
+- **源级、平铺、排他、只读**。每个视频恰属于一个合集。合集内容由扫描全量重算，手工改名/增删一律 400。
+- id 前缀区分来源，**不加 `kind` 列**（省一次迁移）：
+
+| 来源 | id 形式 | 谁维护 |
+|---|---|---|
+| 自动合集 | `dir:<source_id>:<rel_dir>` | 每次扫描重算 |
+| 手工收藏夹 | `col:<12 位随机 hex>` | 只由用户改，扫描永不触碰 |
+
+由此得到一条硬性质：**重扫不可能破坏用户的手工组织**；名称是显示值，改名不丢关联。
+
+## 4. 元数据
+
+### 4.1 单一权威，只在线可写
+
+元数据只存在服务端，客户端不持有独立副本（只读源例外）。离线时对网络源一无所知，
+基于不完整信息做的修改没有意义 —— 所以离线是纯只读。
+
+### 4.2 并发：到达序 LWW
+
+在线写经服务端串行，天然有序。每次写入分配自增 `rev`，**后到达覆盖先到达**，不比较客户端时间戳。
+
+批量改名这类「不好重做」的操作可带 `If-Match: <rev>`，过期返回 `409` + 当前值。默认不带。
+
+| 情形 | `rev` 语义 |
+|---|---|
+| 没有 `media_meta` 行 | 等价 `rev = 0`，全部字段跟随源端 |
+| 空补丁 | 不写库、不增 `rev`（否则无法区分「改过」和「点了一下」） |
+| 被权限拒绝 | 不写库、不增 `rev`、**不留空记录**（闸门在写入之前） |
+
+补丁里只要含有被禁止的字段，**整批拒绝**，不做部分写入。
+
+### 4.3 只读源的本地覆盖
+
+仅当 `virtualWrite = none` 时启用：`显示值 = 客户端本地覆盖 ?? 服务端源端元数据`。
+存客户端数据库，不上报。这是例外路径。
+
+### 4.4 收藏夹：多对多
+
+```
+collection(id, name, parent_id, sort_order)      -- 支持树
+collection_item(collection_id, source_id, key, sort_order)
+```
+
+与物理目录是两个正交维度：
+
+| 维度 | 来源 | 数量 | 可变 |
+|---|---|---|---|
+| 物理目录 | 扫描时记录 | 一个视频一个 | 不可变（改不了文件） |
+| 虚拟收藏夹 | 用户创建 | 一个视频多个 | 任意重组 |
+
+收藏是**用户层**：跨源、跨端同步，不属于任何源，因此不挂在源列表里。
+
+### 4.5 继续观看与连播
+
+- **继续观看** = `sort=recent` 且必须同时过滤：判据 `last_play_at IS NOT NULL AND play_pos_ms > 0`。
+  只按时间排序会把「点开 1 秒就关」的全算进来。
+- **播放不是「打开一个视频」，而是「在一个上下文队列里播」**：从收藏夹/合集点开，队列就是那一整份列表，
+  上一条/下一条在夹子里翻，而不是回信息流。
+
+## 5. 数据模型
+
+### 5.1 磁盘布局
+
+```
+<source_root>/                 # dual
+└── <avid>/c_<cid>/
+    ├── entry.json
+    ├── danmaku.xml            # 保留，不解析
+    └── <tag>/{index.json, video.m4s, audio.m4s}
+
+<source_root>/                 # single
+├── <目录A>/xxx.mp4            # 子目录 = 合集
+└── zzz.mp4                    # 根散落文件 = 「根目录」合集
+
+<meta_root>/
+├── library.db
+├── poster/<source_id>/<key>.jpg     # 封面或抽帧
+└── export/<key>.mp4                 # remux 产物，LRU 淘汰
+```
+
+表定义以 [`src/MediaRack.Core/Store/Schema/schema.sql`](../src/MediaRack.Core/Store/Schema/schema.sql) 为唯一源
+（编译期嵌入，代码里没有第二份 DDL；逐版迁移同目录 `schema.v2~v7.sql`）。
+
+| 表 | 作用 |
+|---|---|
+| `source` / `source_folder` | 源的登记信息；**一个源可挂多个文件夹**（v3），真相以 `source_folder` 为准 |
+| `media` | 条目，主键 `(source_id, key)`；路径存**相对路径**，换盘不失效 |
+| `media_track` | 双流分轨（`video` / `audio` 的 size / md5 / codecid） |
+| `media_meta` | 虚拟元数据（权威，在线可写）：标题、标签、隐藏、旋转、进度、`rev` |
+| `collection` / `collection_item` | 合集（自动合集由扫描全量重建） |
+| `favorite` / `favorite_item` / `favorite_collection` | 跨端收藏（v4）：视频与合集都能收藏，可跨源 |
+| `content_fp` | single 条目内容指纹台账（v5）：见下 |
+| `last_session` | 继续观看 |
+| `schema_version` | 迁移历史，不属于业务模型 |
+
+**`content_fp` 解决什么**：single 的 `key = sha1(rel_path)`，路径一动 key 就换，
+用户的旋转/隐藏/标签全部悬空。所以给 single 文件算内容指纹（大小 + 首尾 64KB 的 SHA-256）
+记在**全局**台账里；扫描遇到新位置时按指纹找到旧位置，把 `media_meta` 认领过来。
+台账只负责「指路」，meta 始终只有一份真身。dual 条目没有这个问题（key 是 B 站内容身份）。
+
+### 5.2 扫描
+
+```
+dual：遍历 */c_*/entry.json → 解析 avid/cid/title/owner → 读 index.json 取每路 size/md5
+     → 校验 → 封面不存在则本地化 → upsert
+single：按扩展名遍历（跳过隐藏系统目录） → ffprobe 取时长/分辨率/codec
+       → rel_dir 即物理分组 → 无封面则抽帧 → upsert
+```
+
+- **本次未出现的旧条目置 `status='missing'`，不删除**。消失多半是移动硬盘没插、路径变了；
+  删除会让用户以为库被清空。`media_meta` 与收藏夹关系一并保留。
+- **没有文件监听，扫描是显式动作**。几万条目 + 机械盘，边写边扫会把「扫描中」永久化。
+- 扫描器自己走目录栈，不用 `EnumerateFiles(AllDirectories)`（后者遇无权限目录整次抛异常）。
+
+## 6. 封面
+
+源头统一为一个字段 `poster_rel`，优先级：源端封面 > 内嵌封面 > **抽帧（视频中点帧）**。
+取中点而非首帧（首帧常是黑场或 logo）。
+
+| 项 | 约定 |
+|---|---|
+| 尺寸 | 宽 ≤560、高按比例，**小图不放大**，竖屏不裁 16:9 |
+| 判定 | 有没有封面**以磁盘为准**，不以 `poster_rel` 为准 → 删掉 `poster/` 重跑自愈 |
+| 失败 | 留空 + 进扫描报告，**不阻塞入库**（坏文件永远抽不出帧） |
+| 原子性 | 先写 `.tmp.jpg` 再 rename，避免半张图被当有效封面 |
+
+抽帧用 ffmpeg，不用 OpenCV（cv2 在中文路径下静默失败）。**ffmpeg 不随包分发**，
+缺了按能力降级：扫描/管理页/dual 源全不受影响，single 源退化为「仅登记文件」，封面 404。
+
+## 7. 播放交付
+
+| 模式 | 处理 | 服务端开销 | 画质 | 谁用 |
+|---|---|---|---|---|
+| `direct` | 双流原始 m4s，Range 直送 | ≈0（**零转码**） | 无损 | Android / PC 客户端自己合成双流 |
+| `remux` | `ffmpeg -c copy` 封成单流 mp4 | 低（磁盘 IO） | 无损（换容器） | 浏览器、VLC、投屏 |
+| `transcode` | 硬编转码到目标码率 | 高 | 有损 | 弱网（未实现，返回 409） |
+
+`auto` 当前等于 `remux`（唯一消费者是浏览器 `<video>`，一个标签只能吃一条流）。
+客户端要零 CPU 就显式请求 `direct`。
+
+- **转码的硬前提是硬件编码器**（NVENC / QSV / AMF / VideoToolbox）。4K HEVC 软解软编无法实时，
+  探测不到就禁用 `transcode` 并明示，不假装软件转码能用。
+- **缓冲与降码率不互相替代**：预缓冲解决峰值抖动，降码率解决平均带宽不足。
+
+## 8. 接口
+
+契约唯一源：[`contracts/openapi.v1.yaml`](../contracts/openapi.v1.yaml)。
+
+| 类别 | 端点 |
+|---|---|
+| 源与库 | `GET /api/v1/sources`、`/sources/{source}/library`、`/library` |
+| 详情 | `GET /api/v1/media/{source}/{key}`（含 `tracks[]` 与 `delivery[]`） |
+| 流 | `GET /media/{source}/{key}/{video.m4s,audio.m4s,file}`（**支持 Range**） |
+| 播放 | `GET /play/{source}/{key}?mode=auto\|direct\|remux\|transcode`（逃生舱） |
+| 图像 | `GET /poster/{source}/{key}.jpg`（封面）、`/media/{source}/{key}/thumb.jpg`（网格缩略图） |
+| 管理 | `POST /api/v1/meta/{source}/{key}`、`/collections`、`/progress/{source}/{key}` |
+| 收藏 | `GET /api/v1/favorites`、`/favorites/{id}/items`、`/favorites/{id}/collections`、`/media/{source}/{key}/favorites`（这条在哪些收藏夹里） |
+| 扫描 | `POST /api/v1/scan` → 202，`GET /api/v1/scan/{jobId}` |
+| 配对 | `GET /api/v1/auth/pairing`、`/auth/pairing/qr?host=` |
+| 鉴权 | `GET /api/v1/auth/state`、`POST /auth/login`、`/auth/logout` |
+| 运维 | `GET /api/v1/health`、`/api/v1/export/{source}/{key}.mp4` |
+
+共 **27** 个端点。「这条在哪些收藏夹里」必须单开端点：没有它就得为每个收藏夹翻一遍列表
+（N 次分页请求）才能画出勾选状态。
+
+**所有路径都带 `{source}` 段** —— 这是「源独立」在接口层的体现，不存在脱离源的全局 key 操作。
+
+### 8.1 两种对外形态
+
+| 入口 | 内容 | 可见范围 |
+|---|---|---|
+| `/` | 管理控制台（加源、扫描、改名、收藏夹） | **仅本机**。非本机请求一律 `403 loopback_only` |
+| `/s/{源}/` | 单源库页（浏览 + 播放 + 配对） | 局域网/手机可达，带令牌 |
+
+管理台按设计不对外：它能改库，暴露到局域网等于把写权限交给整个网段。
+
+### 8.2 鉴权：三路凭据
+
+不配令牌 = 不鉴权（局域网自用的默认）。配了之后除静态页、`/health`、`/auth/*` 外一律要凭据。
+三路都认，不是「多支持几种写法」，是被客户端能力逼出来的：
+
+| 凭据 | 谁用 | 缺了会怎样 |
+|---|---|---|
+| `Authorization: Bearer` | Android / PC 客户端 / curl | 标准做法 |
+| Cookie `mrack_token_s<port>` | 浏览器 | `<img src="/poster/...">`、`<video src="/play/...">` 是浏览器自己发的请求，加不了自定义头 |
+| `?token=` | VLC / 投屏 / 电视盒子 | 这类客户端只能吃一个 URL（代价：令牌进播放器历史） |
+
+## 9. 多服务：同一份库的几副面孔
+
+一个进程可以同时监听多个端口，每端口一套密码 / 可见源 / 可写开关，**共用同一个库**。
+不是多租户——在 8080 改的名字，从 8081 看也是改过的。
+
+```jsonc
+{
+  "metaRoot": "<库目录>",
+  "services": [
+    { "name": "全部", "port": 8080, "password": null, "writable": true,  "sources": [] },
+    { "name": "家庭", "port": 8081, "password": "***", "writable": false, "sources": ["home"] }
+  ]
+}
+```
+
+| 字段 | 语义 | 缺省 |
+|---|---|---|
+| `port` | 独立监听端口，进程内唯一 | 必填 |
+| `password` | 该端口凭据；null/空串 = 完全公开 | 公开 |
+| `writable` | 是否接受写操作 | `true` |
+| `sources` | 可见源白名单；**空数组 = 全部源** | 全部 |
+
+没有配置文件时退回单服务模式，行为与旧版一致。
+
+**四个不能随手改的细节**
+
+1. **不可见的源返回 404，不是 403。** 403 等于承认「它存在，只是不给你看」，能用枚举摸出库结构。
+2. **cookie 名必须带端口。** cookie 匹配只看 domain + path，**端口不参与**。共用名字会让公开服务的
+   登录态顺带解锁加密服务。
+3. **可见性过滤必须下到 SQL 层**（`json_each($scope)`）。内存过滤会让 `total` 仍按全库算，
+   表现为「总数 5427，翻两页就到底」。
+4. **写权限是两把独立的闸**：源级 `virtualWrite` 与服务级 `writable` 互不代替。
+
+## 10. 客户端矩阵与配对
+
+| 客户端 | 形态 | 说明 |
+|---|---|---|
+| 浏览器 | Web 管理台 / 单源库页 | 过渡方案：dual 源走后端 remux |
+| Android | Kotlin + Compose + Media3 | 双流客户端合成，服务端零 CPU |
+| PC 客户端 | Avalonia + libvlc | 横屏播放器，连任意服务端 |
+
+三端平权：吃同一份契约，连任意服务端。C# 与 Kotlin 的 `ApiClient` 是同一契约的两个投影，改一边要改另一边。
+
+**添加服务端的三层机制**
+
+| 层 | 机制 | 解决什么 |
+|---|---|---|
+| 主路径 | 二维码 `http://<host>:<port>/#token=...` | 地址+端口+令牌一步到位；跨网段可用；零组播依赖 |
+| 同网段捷径 | mDNS 广播 | 同一 WiFi 免手填 IP |
+| 永久兜底 | 手填 IP:端口 + 令牌 | AP 隔离 / 跨 VLAN / VPN 等组播到不了的场景 |
+
+mDNS 的 TXT 记录**绝不含令牌**。AP 隔离是组播的现实杀手（路由器隔离客户端，代码修不了），
+发现列表为空时要引导用户退回扫码或手输，而不是让人以为 App 坏了。
+
+## 11. 命名与不可逆项
+
+| 项 | 值 | 可后改 |
+|---|---|---|
+| 产品名 | `MediaRack` | 是 |
+| CLI 命令 | `mrack` | 建议早定 |
+| **Android applicationId** | `io.github.garfieldgod.mediarack` | **否** |
+| HTTP 路径前缀 | `/api/v1` | **否** |
+| 内容 key | `dual: <avid>_c<cid>` / `single: s_<sha1[:16]>` | **否**（已下载/已索引的数据靠它） |
+
+applicationId 同时是商店身份、签名升级链、**App 私有目录路径**三样东西。改了就变成另一个 App，
+且旧目录里的下载全部访问不到。必须写第一行 Android 代码之前定死。
+
+命名硬规则：全小写、仅 `a-z0-9_`、每段不以数字开头、不用连字符。
+
+## 12. 风险
+
+| # | 风险 | 应对 |
+|---|---|---|
+| 1 | Media3 直读 m4s 兼容性（fMP4 + sidx + 双 Range + 时长差 43ms） | 降级 `remux`，只换 URI |
+| 2 | 无硬编时无法降码率 | 禁用 `transcode`，明示，靠预缓冲 |
+| 3 | 4K HEVC 老机型解不动 | 降分辨率 |
+| 4 | 手机无法直读 B 站缓存目录（`Android/data` 受 scoped storage 隔离） | 本地源 = App 私有目录；远程源走网络 |
+| 5 | 封面随视频下架 404 | 首次扫描即本地化 |
+| 6 | 单流源无全局身份，无法跨源去重 | 接受，明示 |
+| 7 | 服务端不可达 | 条目灰度保留；有本地副本则自动切换 |
+| 8 | 抽帧读 m4s 失败（个别编码） | 回退无缩略图，不阻塞入库 |
+
+## 附录：术语
+
+| 术语 | 含义 |
+|---|---|
+| Source / 源 | 一个可挂载的内容位置（双流或单流目录），系统对其只读 |
+| 单源视图 / 聚合视图 | 只看一个源（不去重） / 全部视频按 key 去重合并 |
+| key | 内容身份：`<avid>_c<cid>` 或 `s_<sha1[:16]>` |
+| 合集 | 源级结构层，扫描重算，只读；single 看目录、dual 看 UP 主 |
+| 收藏夹 | 用户层组织，多对多、可跨源、可写 |
+| `MediaRef` | 播放单元：`tracks[]` + `base(LOCAL/REMOTE)` |
+| `virtualWrite` | 服务端视野上是否允许改元数据（不影响磁盘） |
+| `rel_dir` | 物理目录，single 源里即合集名 |

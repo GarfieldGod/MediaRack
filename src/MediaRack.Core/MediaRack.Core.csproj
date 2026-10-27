@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+  <!--
+    schema 的唯一定义源：Store/Schema 下的 DDL 编入程序集，代码里不存在第二份 DDL。
+    放在项目内而不是 docs/：这些 .sql 是**编译期资源**，改它们就是改代码，
+    diff 应该跟 Store/ 的改动出现在同一个评审里，而不是被当成"改了文档"。
+    LogicalName 是写死的（与文件位置无关），所以移动文件不用动 Schema.cs。
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Store\Schema\schema.sql" LogicalName="MediaRack.Core.Store.schema.v1.sql" />
+    <EmbeddedResource Include="Store\Schema\schema.v2.sql" LogicalName="MediaRack.Core.Store.schema.v2.sql" />
+    <EmbeddedResource Include="Store\Schema\schema.v3.sql" LogicalName="MediaRack.Core.Store.schema.v3.sql" />
+    <EmbeddedResource Include="Store\Schema\schema.v4.sql" LogicalName="MediaRack.Core.Store.schema.v4.sql" />
+    <EmbeddedResource Include="Store\Schema\schema.v5.sql" LogicalName="MediaRack.Core.Store.schema.v5.sql" />
+    <EmbeddedResource Include="Store\Schema\schema.v6.sql" LogicalName="MediaRack.Core.Store.schema.v6.sql" />
+    <EmbeddedResource Include="Store\Schema\schema.v7.sql" LogicalName="MediaRack.Core.Store.schema.v7.sql" />
+  </ItemGroup>
+
+</Project>

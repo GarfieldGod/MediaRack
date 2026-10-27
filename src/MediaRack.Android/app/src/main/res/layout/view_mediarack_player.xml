@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    播放器视图。
+
+    为什么用 texture_view 而不是默认的 surface_view：
+    SurfaceView 的画面在系统合成器里是**独立图层**，父级的缩放/平移变换对它无效——
+    双指放大缩小会完全没反应。TextureView 的内容画在普通 View 画布上，
+    外层 graphicsLayer 的 scale/translation 能真正作用到画面上。
+
+    代价：TextureView 多一次 GPU 拷贝，功耗略高于 SurfaceView（SurfaceView 走
+    直通路径）。真机实测 4K HEVC 双流仍能硬解流畅播放，换来可用的缩放能力。
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/mediarack_player_view"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    app:surface_type="texture_view"
+    app:use_controller="false"
+    app:shutter_background_color="@android:color/black"
+    app:keep_content_on_player_reset="false" />

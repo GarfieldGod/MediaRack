@@ -1,0 +1,28 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:MediaRack.Client.ViewModels"
+        x:Class="MediaRack.Client.Views.MainWindow"
+        x:DataType="vm:ShellViewModel"
+        Width="1280" Height="800" MinWidth="900" MinHeight="560"
+        Title="MediaRack">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- 壳顶栏。播放页切全屏时要整条收掉（只留画面 + 控制条），
+             由 MainWindow.SetPlayerFullscreen 控制。 -->
+        <Border Grid.Row="0" x:Name="Chrome" Padding="16,10"
+                Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Text="MediaRack" FontSize="16" FontWeight="Bold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding ServerLabel}"
+                           VerticalAlignment="Center" Margin="16,0" Opacity="0.75" />
+                <Button Grid.Column="2" Content="断开"
+                        Command="{Binding DisconnectCommand}"
+                        IsVisible="{Binding IsConnected}" />
+            </Grid>
+        </Border>
+
+        <ContentControl Grid.Row="1" Content="{Binding CurrentPage}" />
+
+    </Grid>
+</Window>

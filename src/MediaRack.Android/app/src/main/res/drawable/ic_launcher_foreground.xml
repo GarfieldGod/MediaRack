@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 播放三角 + 底座横条，抽象"视频架" -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,30 L74,54 L40,78 Z" />
+    <path
+        android:fillColor="#B3FFFFFF"
+        android:pathData="M34,82 L74,82 A4,4 0 0 1 74,90 L34,90 A4,4 0 0 1 34,82 Z" />
+</vector>

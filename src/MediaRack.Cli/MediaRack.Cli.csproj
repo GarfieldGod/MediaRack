@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\MediaRack.Core\MediaRack.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 命令名与产品一致：mrack -->
+    <AssemblyName>mrack</AssemblyName>
+    <RootNamespace>MediaRack.Cli</RootNamespace>
+  </PropertyGroup>
+
+</Project>

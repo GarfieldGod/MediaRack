@@ -1,0 +1,1169 @@
+openapi: 3.1.0
+
+info:
+  title: MediaRack API
+  version: 1.0.0
+  description: |
+    多源视频库与播放服务。
+
+    三条贯穿全契约的规则：
+
+    1. **所有条目路径都带 `{source}` 段**——不存在脱离源的全局条目操作。
+       "全部视频"聚合视图是唯一例外，它出现在 `/api/v1/library`。
+    2. **一切写操作都要求在线**，离线客户端只能读。磁盘永不可写。
+    3. 流端点不带版本前缀（`/media/...`），API 端点带 `/api/v1`。
+       流端点的契约一旦被客户端依赖就不能改，版本号对它没有意义。
+
+    ## 多服务（同一进程、多个端口）
+
+    一个进程可以同时提供多个"对外服务"，它们**共用同一个库**，差别只在：
+
+    | 维度 | 说明 |
+    |---|---|
+    | 端口 | 每个服务独立端口 |
+    | 密码 | 有密码的服务需要凭据；无密码的完全公开 |
+    | 可见源 | 白名单内的源才可见；**看不见的源一律返回 404**（不是 403） |
+    | 可写 | `writable=false` 的服务拒绝一切写操作（`403 read_only_service`） |
+
+    同一份数据换个端口看，改名/标签/进度都是共享的——这不是多租户，是"同一份库的几副面孔"。
+
+    两条与凭据相关的约定：
+
+    - 每个服务的 cookie 名带端口（`mrack_token_s<port>`）。cookie 的匹配规则里**不含端口**，
+      用同一个名字会导致"登录 8080 顺带解锁 8081"。
+    - `/api/v1/health` 免鉴权，但它的 `sources` 数组**按当前服务过滤**，未认证时 `metaRoot` 为 null。
+
+servers:
+  - url: http://localhost:8080
+    description: 本机
+  - url: http://{host}:8080
+    description: 局域网
+    variables:
+      host:
+        default: 192.0.2.10
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+  - queryToken: []
+  - {}
+
+tags:
+  - name: sources
+    description: 源管理
+  - name: library
+    description: 库浏览
+  - name: media
+    description: 条目详情
+  - name: stream
+    description: 流（Range）
+  - name: manage
+    description: 虚拟管理（要求在线）
+  - name: ops
+    description: 运维
+  - name: auth
+    description: 鉴权（仅在服务端配了令牌时才需要）
+
+paths:
+  # ── 源与库 ────────────────────────────────────────────────
+  /api/v1/sources:
+    get:
+      tags: [sources]
+      summary: 源清单
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items: { $ref: '#/components/schemas/Source' }
+
+  /api/v1/sources/{source}/library:
+    get:
+      tags: [library]
+      summary: 单源列表（不去重）
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Collection'
+        - $ref: '#/components/parameters/Favorite'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/IncludeHidden'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaPage' }
+        '404':
+          $ref: '#/components/responses/SourceNotFound'
+
+  /api/v1/library:
+    get:
+      tags: [library]
+      summary: 聚合列表（跨源按内容键去重）
+      description: |
+        同一 `key` 在多个源各有一条记录，聚合视图把它们合并成一项，
+        并在 `sources` 里列出所在源。`preferred` 指出播放时优先使用的源。
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Collection'
+        - $ref: '#/components/parameters/Favorite'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/IncludeHidden'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaPage' }
+
+  /api/v1/media/{source}/{key}:
+    get:
+      tags: [media]
+      summary: 条目详情
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaDetail' }
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+
+  /api/v1/media/{source}/{key}/favorites:
+    get:
+      tags: [favorites]
+      summary: 这一条属于哪些收藏夹
+      description: |
+        返回收藏夹 id 数组。桌面客户端的详情侧栏要把每个收藏夹的勾选状态一次画全，
+        没有这条端点就得为每个收藏夹各翻一遍列表（N 次分页请求）。
+
+        条目本身**不校验存在性**：它可能刚被扫掉，但残留的收藏关系仍要能读出来让用户取消。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string, example: 'fav:3f19c6a4aee8' }
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+
+  # ── 流 ────────────────────────────────────────────────────
+  /media/{source}/{key}/video.m4s:
+    get:
+      tags: [stream]
+      summary: 视频轨（dual 源）
+      description: |
+        支持 `Range`。服务端零转码，只把文件读出来推出去。
+        这是主播放路径的一半，客户端需同时请求 audio.m4s。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+        - $ref: '#/components/parameters/Range'
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '206':
+          $ref: '#/components/responses/PartialBinary'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '416':
+          $ref: '#/components/responses/RangeNotSatisfiable'
+
+  /media/{source}/{key}/audio.m4s:
+    get:
+      tags: [stream]
+      summary: 音频轨（dual 源）
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+        - $ref: '#/components/parameters/Range'
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '206':
+          $ref: '#/components/responses/PartialBinary'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '416':
+          $ref: '#/components/responses/RangeNotSatisfiable'
+
+  /media/{source}/{key}/file:
+    get:
+      tags: [stream]
+      summary: 单流文件（single 源）
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+        - $ref: '#/components/parameters/Range'
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '206':
+          $ref: '#/components/responses/PartialBinary'
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+        '416':
+          $ref: '#/components/responses/RangeNotSatisfiable'
+
+  /play/{source}/{key}:
+    get:
+      tags: [stream]
+      summary: 按选定模式播放（逃生舱）
+      description: |
+        **这是兜底通路**：客户端直连双流失败时，只换 URI，播放器代码不用改。
+
+        | mode | 行为 |
+        |---|---|
+        | `auto` | 当前等于 `remux`。服务端按"当前消费方最可能认什么"选路；浏览器 `<video>` 只能吃一条流，所以默认走单流。Android 端应显式请求 `direct`。 |
+        | `direct` | **307 到 `/api/v1/media/{source}/{key}`**（不是到流本身）。一条 `Location` 装不下两条流，所以重定向到详情，客户端从 `tracks[].url` 取两条地址自己合成。 |
+        | `remux` | `ffmpeg -c copy` 转封装成单流 mp4（不重新编码，只重排容器），落 `export/` 并复用。single 源直接给原文件。 |
+        | `transcode` | 尚未实现；一律 409 `capability_unavailable`。 |
+
+        `remux` 的首次请求会阻塞到产物写完（4K 约几百毫秒到几秒），之后命中缓存；产物按总预算做 LRU 淘汰。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [auto, direct, remux, transcode]
+            default: auto
+        - $ref: '#/components/parameters/Range'
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '206':
+          $ref: '#/components/responses/PartialBinary'
+        '307':
+          description: direct 模式，指向双流地址
+          headers:
+            Location:
+              schema: { type: string }
+        '409':
+          description: |
+            请求的模式不可用：`transcode` 尚未实现，或 `remux` 时本机缺 ffmpeg。
+            `code` 固定为 `capability_unavailable`，客户端据此改请求 `direct`。
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /poster/{source}/{key}.jpg:
+    get:
+      tags: [stream]
+      summary: 封面或抽帧缩略图
+      description: |
+        三级回退已由服务端完成：源端封面 > 内嵌封面 > 抽帧。
+        抽帧尚未生成时返回 404（`code=poster_not_found`），客户端显示占位图。
+
+        `size=thumb|full` 当前返回同一个文件——库只有一种尺寸（宽 ≤560）。
+        参数保留是为了不让客户端在有了多尺寸之后改接口。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+        - name: size
+          in: query
+          schema:
+            type: string
+            enum: [thumb, full]
+            default: thumb
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '404':
+          description: 尚无缩略图
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /media/{source}/{key}/thumb.jpg:
+    get:
+      tags: [stream]
+      summary: 首帧缩略图（视频第 0 帧，高 720）
+      description: |
+        与 `/poster`（中点帧封面）互补：首帧用于信息流连贯翻页——
+        缩略图与播放画面落位衔接。首次请求触发 ffmpeg 抽帧（同条目互斥），
+        产物缓存在 meta 目录并按预算 LRU 淘汰；后续请求直读缓存。
+        没有 ffmpeg 时返回 404（`code=thumb_unavailable`），客户端回退封面海报。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '404':
+          description: 条目不存在，或本机没有 ffmpeg（thumb_unavailable）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ── 虚拟管理（要求在线）────────────────────────────────────
+  /api/v1/meta/{source}/{key}:
+    post:
+      tags: [manage]
+      summary: 修改虚拟元数据（只改库，不改磁盘）
+      description: |
+        到达序 LWW：每次成功写入 `rev` 自增。默认不校验版本；
+        批量改名等"不好重做"的操作可带 `If-Match: <rev>` 做乐观锁。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+        - name: If-Match
+          in: header
+          required: false
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetaPatch' }
+      responses:
+        '200':
+          description: 已写入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaMeta' }
+        '403':
+          $ref: '#/components/responses/ReadOnlySource'
+        '409':
+          description: "`If-Match` 与服务端 rev 不符"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/collections:
+    get:
+      tags: [manage]
+      summary: 合集列表（源级、平铺、只读）
+      description: |
+        v4 起合集是媒体库的**结构投影**，不是用户组织：
+
+        - single 文件夹源：目录即合集，**只算直接父目录**（子目录各自成合集）；
+          父目录自己没有视频就不成合集——平铺、没有树。
+        - dual（B 站缓存）源：一个 UP 主一个合集，与缓存目录结构无关；缺 owner 的归
+          `up:<源>:unknown`（未识别 UP 主）。
+        - **排他**：一个条目恰好属于一个合集（`media.collection_id` 单列）。
+
+        id 规则：`dir:<源>:/<相对目录>`（源根是 `dir:<源>:/`）、`up:<源>:<up_mid>`。
+        合集由扫描后整库重建，**客户端只读**；用户想整理内容请用「收藏」。
+      parameters:
+        - name: source
+          in: query
+          description: 只看某个源；省略返回全部可见源
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Collection' }
+
+  /api/v1/favorites:
+    get:
+      tags: [manage]
+      summary: 收藏夹列表（用户层、跨端）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Favorite' }
+    post:
+      tags: [manage]
+      summary: 新建收藏夹
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Favorite' }
+        '409':
+          description: 重名
+
+  /api/v1/favorites/{id}:
+    patch:
+      tags: [manage]
+      summary: 收藏夹改名
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        '200': { description: OK }
+        '409': { description: 重名 }
+    delete:
+      tags: [manage]
+      summary: 删除收藏夹（连带关联，不动 media / 合集）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+
+  /api/v1/favorites/{id}/items:
+    post:
+      tags: [manage]
+      summary: 收藏 / 取消收藏视频
+      description: 收藏夹里的条目列表用 `GET /api/v1/library?favorite=<id>` 读。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CollectionItemsPatch' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added: { type: integer }
+                  removed: { type: integer }
+
+  /api/v1/favorites/{id}/collections:
+    get:
+      tags: [manage]
+      summary: 收藏的合集（关注的 UP 主 / 文件夹）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Collection' }
+    post:
+      tags: [manage]
+      summary: 收藏 / 取消收藏合集
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                add: { type: array, items: { type: string } }
+                remove: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: OK
+
+  /api/v1/progress/{source}/{key}:
+    post:
+      tags: [manage]
+      summary: 回传播放进度
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProgressPatch' }
+      responses:
+        '200':
+          description: OK
+
+  /api/v1/scan:
+    post:
+      tags: [manage]
+      summary: 触发扫描
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScanRequest' }
+      responses:
+        '202':
+          description: 已接受，异步执行
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string }
+
+  /api/v1/scan/{jobId}:
+    get:
+      tags: [manage]
+      summary: 查询扫描任务
+      description: |
+        `POST /scan` 立刻返回 `202 + jobId`，客户端轮这个地址看进度。
+        任务只存在内存里，进程重启后未完成的任务会丢失——扫描幂等，重发即可。
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanJob' }
+        '404':
+          description: 任务不存在（或已过期）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ── 运维 ──────────────────────────────────────────────────
+  # ── 鉴权 ──────────────────────────────────────────────────
+  /api/v1/auth/state:
+    get:
+      tags: [auth]
+      summary: 查询本次请求的鉴权状态
+      description: 免鉴权。页面启动时先问它，据此决定要不要显示登录框。
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthState' }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: 用令牌换 cookie
+      description: |
+        成功后响应头带 `Set-Cookie: mrack_token=...; HttpOnly; SameSite=Lax; Path=/; Max-Age=30d`，
+        此后浏览器发起的封面、视频流请求会自动带票。
+
+        服务端没配令牌时也返回 200（`authRequired=false`），客户端不必特判。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRequest' }
+      responses:
+        '200':
+          description: 通过（或本来就不需要令牌）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthState' }
+        '401':
+          description: 令牌不正确
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 清除 cookie
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthState' }
+
+  /api/v1/auth/pairing:
+    get:
+      tags: [auth]
+      summary: 配对信息（本机可达地址 + 令牌）
+      description: |
+        配对二维码的数据源（主路径见 docs/design.md §10）。`hosts` 是本机可达的 IPv4 地址
+        （Tailscale CGNAT 段排最前），`token` 即服务的访问令牌（密码），
+        为 null 表示服务公开、无需令牌。
+
+        响应包含令牌本身，因此**必须鉴权**：配了令牌的服务未登录时返回 401。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pairing' }
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/auth/pairing/qr:
+    get:
+      tags: [auth]
+      summary: 配对二维码（SVG）
+      description: |
+        渲染 `http://{host}:{port}/#token={token}` 为 SVG 二维码，
+        浏览器 `<img>` 直用（cookie 自动带上）。`host` 必须是
+        `/auth/pairing` 返回的本机地址之一——此端点不得被当作通用二维码生成器。
+      parameters:
+        - name: host
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: image/svg+xml
+        '400':
+          description: host 不是本机地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/health:
+    get:
+      tags: [ops]
+      summary: 健康检查
+      description: |
+        免鉴权（监控探活拿不到令牌）。代价是未认证时 `metaRoot` 为 null——
+        状态和源数量足够判断死活，磁盘路径属于知道得越少越好的那类信息。
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /api/v1/export/{source}/{key}.mp4:
+    get:
+      tags: [ops]
+      summary: 导出为单流 mp4（临时产物）
+      description: |
+        `ffmpeg -c copy` 转封装，落在 `export/` 下，LRU 淘汰。
+        用于投屏、分享、剪辑，以及一切不认双流的消费方。
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Key'
+      responses:
+        '200':
+          $ref: '#/components/responses/Binary'
+        '202':
+          description: 导出任务已开始，稍后重试同一 URL
+        '404':
+          $ref: '#/components/responses/MediaNotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        写代码的客户端（Android / curl / 脚本）用。
+        令牌由服务端 `--token` 或 `MediaRack:Token` 配置；**不配时整站不需要鉴权**。
+
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: mrack_token
+      description: |
+        浏览器用，由 `POST /api/v1/auth/login` 下发（HttpOnly、SameSite=Lax、30 天）。
+
+        **这一路不是锦上添花**：`<img src="/poster/...">` 与 `<video src="/play/...">`
+        是浏览器自己发起的请求，加不了自定义头。少了 cookie，配了令牌之后封面和视频
+        会全部 401，页面看上去就是坏的。
+
+    queryToken:
+      type: apiKey
+      in: query
+      name: token
+      description: |
+        给只能吃 URL 的客户端：VLC、投屏、电视盒子。
+
+        代价明确——令牌会留在播放器历史与访问日志里。所以它排在三路里的最后，
+        是"没有更窄信道时"的选择，不是默认用法。
+
+  parameters:
+    Source:
+      name: source
+      in: path
+      required: true
+      schema: { type: string }
+    Key:
+      name: key
+      in: path
+      required: true
+      schema: { type: string }
+      description: dual 为 `<avid>_c<cid>`，single 为 `s_<16 hex>`
+    Query:
+      name: q
+      in: query
+      schema: { type: string }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    Collection:
+      name: collection
+      in: query
+      schema: { type: string }
+    Favorite:
+      name: favorite
+      in: query
+      description: 收藏夹视图（与 collection 互斥使用）
+      schema: { type: string }
+    IncludeHidden:
+      name: includeHidden
+      in: query
+      description: 是否返回 `hidden=true` 的条目。两个列表视图都支持。
+      schema: { type: boolean, default: false }
+    Sort:
+      name: sort
+      in: query
+      description: |
+        列表排序。缺省（或 `title`）按标题。
+
+        - `added`：收藏夹的加入时间**倒序**（最新加入的在前，仅在带 `favorite` 时有意义）。
+          客户端据此做"收藏夹连续播放"——连播顺序必须与列表显示顺序一致。
+        - `recent`：**最后一次播放**的倒序，即「继续观看」。这个排序会**同时过滤**：
+          只返回 `last_play_at` 非空且 `play_pos_ms > 0` 的条目
+          （只判 `last_play_at` 会把"点开 1 秒就关"的也算进来，那属于点开过、不是看过）。
+        - `recommend`：加权随机（手机信息流），必须带 `seed`。
+      schema: { type: string, enum: [title, added, recent, recommend] }
+    Range:
+      name: Range
+      in: header
+      required: false
+      schema: { type: string, example: 'bytes=0-' }
+
+  responses:
+    Binary:
+      description: |
+        二进制流。实际 `Content-Type` 按内容给：
+        `video/m4s`（dual 视频轨）与 `single` 的 mp4 为 `video/mp4`，
+        音频轨为 `audio/mp4`，封面为 `image/jpeg`，其余按扩展名映射。
+        **不要用 `application/octet-stream`**：部分播放器（含 Media3 的探测阶段）会因此放弃。
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    PartialBinary:
+      description: 部分内容
+      headers:
+        Content-Range:
+          schema: { type: string }
+        Accept-Ranges:
+          schema: { type: string, example: bytes }
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    RangeNotSatisfiable:
+      description: Range 越界
+      headers:
+        Content-Range:
+          schema: { type: string, example: 'bytes */6868308' }
+    MediaNotFound:
+      description: 条目不存在于该源
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SourceNotFound:
+      description: 源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ReadOnlySource:
+      description: 该源的 virtualWrite 不允许此操作
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Source:
+      type: object
+      required: [id, name, layout, virtualWrite, enabled, reachable]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        layout:
+          type: string
+          enum: [dual, single]
+        virtualWrite:
+          type: string
+          enum: [none, whitelist, full]
+          description: 只影响虚拟层；磁盘永远不可写
+        enabled: { type: boolean }
+        reachable:
+          type: boolean
+          description: 源根目录当前是否可达
+        itemCount: { type: integer }
+        lastScanAt: { type: integer, description: unix ms }
+
+    Track:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [video, audio]
+        codecid: { type: integer, description: '12=HEVC, 7=H.264, 13=AV1' }
+        bandwidth: { type: integer }
+        sizeBytes: { type: integer }
+        md5: { type: string }
+        url:
+          type: string
+          description: 客户端可直接使用的地址（single 源为 /file，dual 源为 /video.m4s 或 /audio.m4s）
+
+    MediaSummary:
+      type: object
+      required: [key, layout, title, status]
+      properties:
+        key: { type: string }
+        sourceId:
+          type: string
+          description: 单源视图为实际源；聚合视图为 `preferred` 源
+        layout:
+          type: string
+          enum: [dual, single]
+        title:
+          type: string
+          description: 显示值 = 虚拟覆盖 ?? 源端标题
+        upName: { type: string }
+        durationMs: { type: integer }
+        width: { type: integer }
+        height: { type: integer }
+        sizeBytes: { type: integer }
+        tagCode:
+          type: integer
+          description: dual 源的清晰度档位
+        posterUrl: { type: string }
+        hasDanmaku: { type: boolean }
+        hidden: { type: boolean }
+        playPosMs: { type: integer }
+        status:
+          type: string
+          enum: [ok, missing, corrupt]
+        collectionId:
+          type: string
+          description: 所属合集（排他）
+        collectionName: { type: string }
+        collectionKind:
+          type: string
+          enum: [folder, up, '']
+        sources:
+          type: array
+          nullable: true
+          description: |
+            仅聚合视图返回；单源视图为 `null`。
+            列出持有同一 `key` 的全部源（不受 hidden 影响，这是事实信息）。
+          items: { type: string }
+        preferred:
+          type: string
+          nullable: true
+          description: |
+            仅聚合视图返回；单源视图为 `null`。
+            播放时优先使用的源：`status=ok` 优先，同级按 sourceId 排序。
+
+    MediaDetail:
+      allOf:
+        - $ref: '#/components/schemas/MediaSummary'
+        - type: object
+          properties:
+            relPath: { type: string }
+            relDir: { type: string }
+            codec: { type: string }
+            tracks:
+              type: array
+              items: { $ref: '#/components/schemas/Track' }
+            delivery:
+              type: array
+              description: 当前设备实际可用的交付模式
+              items:
+                type: string
+                enum: [direct, remux, transcode]
+            meta: { $ref: '#/components/schemas/MediaMeta' }
+
+    MediaMeta:
+      type: object
+      properties:
+        titleDisplay: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        hidden: { type: boolean }
+        rotation:
+          type: integer
+          enum: [0, 90, 180, 270]
+        playPosMs: { type: integer }
+        playCount: { type: integer }
+        lastPlayAt: { type: integer }
+        rev: { type: integer }
+
+    MetaPatch:
+      type: object
+      description: |
+        只提交要改的字段；未出现的字段保持不变。
+
+        `titleDisplay` 的三种取值各有含义，别混：
+        - 不出现 → 不改；
+        - `null` → 不改（JSON 里 null 与"未出现"在本接口等价，因为 null 无法表达"清除"）；
+        - `""`（空串）→ **清除覆盖**，恢复源端标题。
+        空串清除是刻意的：不需要为"恢复原名"再发明一个 `unset` 动词。
+      properties:
+        titleDisplay: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        hidden: { type: boolean }
+        rotation:
+          type: integer
+          enum: [0, 90, 180, 270]
+        collections:
+          type: array
+          description: 直接替换该条目所属收藏夹集合
+          items: { type: string }
+
+    ProgressPatch:
+      type: object
+      required: [posMs]
+      properties:
+        posMs: { type: integer }
+        completed: { type: boolean }
+
+    Collection:
+      type: object
+      description: 结构合集（只读）。kind=folder 是 single 目录，kind=up 是 dual UP 主。
+      required: [id, name, sourceId, kind, path, itemCount]
+      properties:
+        id:
+          type: string
+          example: 'dir:rec:/Videos'
+          description: '`dir:<源>:/<相对目录>` 或 `up:<源>:<up_mid>`'
+        name:
+          type: string
+          description: 展示名（目录末段 / UP 主名 / 源根用源名）
+        sourceId: { type: string }
+        kind:
+          type: string
+          enum: [folder, up]
+        path:
+          type: string
+          description: 相对源的目录（folder）或 up_mid（up）
+        itemCount: { type: integer }
+
+    Favorite:
+      type: object
+      description: 收藏夹（用户层，多对多、跨源、跨端）
+      required: [id, name, itemCount, collectionCount]
+      properties:
+        id: { type: string, example: 'fav:default' }
+        name: { type: string }
+        itemCount: { type: integer, description: 收藏的视频数 }
+        collectionCount: { type: integer, description: 收藏的合集数 }
+
+    CollectionItemsPatch:
+      type: object
+      properties:
+        add:
+          type: array
+          items: { $ref: '#/components/schemas/ItemRef' }
+        remove:
+          type: array
+          items: { $ref: '#/components/schemas/ItemRef' }
+
+    ItemRef:
+      type: object
+      required: [source, key]
+      properties:
+        source: { type: string }
+        key: { type: string }
+
+    MediaPage:
+      type: object
+      required: [total, items]
+      properties:
+        total: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MediaSummary' }
+        nextOffset: { type: integer, nullable: true }
+
+    ScanRequest:
+      type: object
+      description: |
+        `sourceId` 与 `root` 至少给一个，两者都给时以 `root` 为准（等于"改路径并重扫"）。
+
+        **"加源"就是一次扫描**：给 `root` 时服务端会登记新源（或更新已有源的路径/名称/布局），
+        再扫它。不需要单独的 `POST /sources`——扫描本来就是登记源的动作。
+        重新扫描不会改动已有的 `virtualWrite`：那是用户设定，不该被一次扫描重置。
+      properties:
+        sourceId:
+          type: string
+          description: 已登记的源标识；扫描全部源时由客户端逐个调用
+        root:
+          type: string
+          description: 源目录绝对路径。给它就表示登记/更新这个源
+        name:
+          type: string
+          description: 显示名，仅配合 `root` 有意义
+        layout:
+          type: string
+          enum: [auto, dual, single]
+          default: auto
+          description: 仅配合 `root` 有意义
+        verify:
+          type: string
+          enum: [none, sample, full]
+          default: sample
+          description: |
+            完整性校验强度：
+            `none` 只查文件存在；`sample` 追加字节数比对；`full` 追加 md5 全量比对（慢）。
+            改内容但不改长度的情况只有 `full` 能发现。
+
+    ScanJob:
+      type: object
+      required: [jobId, state]
+      properties:
+        jobId: { type: string }
+        state:
+          type: string
+          enum: [queued, running, done, failed]
+        sourceId: { type: string, nullable: true }
+        message:
+          type: string
+          nullable: true
+          description: 完成时是一句摘要，失败时是原因
+        written: { type: integer }
+        markedMissing: { type: integer }
+        startedAt: { type: integer, description: unix ms }
+        finishedAt: { type: integer, nullable: true, description: unix ms }
+
+    AuthState:
+      type: object
+      required: [authRequired, authenticated]
+      properties:
+        authRequired:
+          type: boolean
+          description: 服务端是否配了令牌（配置事实）
+        authenticated:
+          type: boolean
+          description: 本次请求是否已通过鉴权（这次请求的结论）
+
+    AuthRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+
+    Pairing:
+      type: object
+      required: [hosts]
+      properties:
+        hosts:
+          type: array
+          description: 本机可达的 IPv4 地址，Tailscale（100.64/10）排最前
+          items: { type: string }
+        token:
+          type: [string, 'null']
+          description: 访问令牌（即密码）。null 表示服务公开。二维码内容 = http://{host}:{port}/#token={token}
+
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        schemaVersion: { type: integer }
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              reachable: { type: boolean }
+              itemCount: { type: integer }
+        capabilities:
+          type: object
+          properties:
+            ffmpeg: { type: boolean }
+            hardwareEncoder:
+              type: string
+              nullable: true
+              description: |
+                如 h264_nvenc / hevc_qsv；为 null 时 transcode 不可用。
+                **恒为 null**：transcode 还没实现，报一个能用的编码器只会让客户端
+                以为可以请求它。实现 transcode 后再探测。
+        metaRoot:
+          type: string
+          nullable: true
+          description: |
+            服务端实际读取的库目录，排障时第一眼要看的就是它。
+            配了令牌且本次请求未认证时为 null。
+        authRequired:
+          type: boolean
+          description: 服务端是否配了令牌。客户端据此决定要不要走登录流程。
+
+    Error:
+      type: object
+      required: [code, message]
+      description: |
+        `code` 是给程序判断的，`message` 是给人看的（可以直接上屏）。
+        当前会出现的 `code`：
+
+        | code | HTTP | 含义 |
+        |---|---|---|
+        | `source_not_found` | 404 | 源未登记，**或该源不在当前服务的可见范围内**（两种情况都返回 404，不泄露存在性） |
+        | `media_not_found` | 404 | 该源里没有这个 key |
+        | `poster_not_found` | 404 | 还没有缩略图，客户端显示占位图 |
+        | `track_not_found` | 404 | 条目存在但没有这条轨（如缺 audio.m4s） |
+        | `not_dual` / `not_single` | 404 | 布局与端点不匹配（`/video.m4s` 用在 single 上等） |
+        | `collection_not_found` | 404 | 收藏夹不存在 |
+        | `job_not_found` | 404 | 扫描任务不存在或已过期 |
+        | `read_only_source` | 403 | 该源的 `virtualWrite` 不允许此操作（源级） |
+        | `read_only_service` | 403 | 当前服务的 `writable` 为 false，整个服务不接受写操作（服务级） |
+        | `source_not_visible` | 403 | 请求体里引用了本服务看不到的源（如往收藏夹里加别的源的条目） |
+        | `rev_conflict` | 409 | `If-Match` 与服务端 rev 不符 |
+        | `capability_unavailable` | 409 | `transcode` 未实现，或缺 ffmpeg 时请求 `remux` |
+        | `collection_exists` | 409 | 收藏夹重名 |
+        | `bad_request` | 400 | 参数或请求体不合法 |
+        | `remux_failed` | 500 | ffmpeg 执行失败 |
+        | `unauthorized` | 401 | 当前服务要密码，而凭据缺失或不对（Bearer / cookie / query 三路都没过） |
+      properties:
+        code: { type: string }
+        message: { type: string }

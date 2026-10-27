@@ -1,0 +1,105 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>MediaRack.Client</RootNamespace>
+    <AssemblyName>MediaRack.Client</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Version>0.1.0</Version>
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    [只收集目标架构的 libvlc]
+
+    VideoLAN 包的 targets 按 $(Platform) 决定收哪几套原生库，而我们的 Platform 是 AnyCPU
+    —— 结果 win-x64（108 MB）+ win-x86（104 MB）+ win-arm64（91 MB）三套全进 Content。
+    发布目录一次要写 302 MB，zip 从 92 MB 涨到 184 MB，可另外两套在这台机器上永远用不到。
+
+    以前是靠 scripts/release/publish.sh 的 trim_libvlc「发布后删掉另两套」。那是写完再删：
+      · 白写 195 MB（每次发布都要多花几十秒 IO）
+      · 删除本身会失败（被杀软/索引占用，或被安全策略拦下批量删除），
+        一旦失败就是**静默**把 184 MB 的包当成品发出去（2026-10-27 实测踩到）
+    包自带三个开关，在收集阶段就只收目标架构，比事后删干净得多。
+
+    RID 为空（开发机 dotnet build / run）时不碰，保持包的默认行为。
+    包换了布局也不会出事：前缀条件只用 RID 后缀判定，开关名对不上就回到包默认。
+  -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <VlcWindowsX64Enabled>false</VlcWindowsX64Enabled>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+    <VlcWindowsX64Enabled Condition="$([System.String]::Copy('$(RuntimeIdentifier)').EndsWith('-x64'))">true</VlcWindowsX64Enabled>
+    <VlcWindowsX86Enabled Condition="$([System.String]::Copy('$(RuntimeIdentifier)').EndsWith('-x86'))">true</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled Condition="$([System.String]::Copy('$(RuntimeIdentifier)').EndsWith('-arm64'))">true</VlcWindowsArm64Enabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 版本统一在仓库根的 Directory.Packages.props，这里只写包名。 -->
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+
+    <PackageReference Include="LibVLCSharp.Avalonia" />
+
+    <!--
+      libvlc native 运行时：每个目标平台各带一份（实测 Windows 约 302 MB）。
+      它是被 Process/本机加载的 dll，不能进单文件 bundle，必须按平台选。
+      默认（未指定 RuntimeIdentifier）= 当前开发机 Windows；发布时传 -r 自动切换。
+    -->
+    <PackageReference Include="VideoLAN.LibVLC.Windows"
+                      Condition="'$(RuntimeIdentifier)' == '' OR $([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win'))" />
+    <PackageReference Include="VideoLAN.LibVLC.Mac"
+                      Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx'))" />
+    <PackageReference Include="VideoLAN.LibVLC.Linux"
+                      Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux'))" />
+  </ItemGroup>
+
+  <!--
+    [单文件发布必须把 libvlc 挡在 bundle 外面]
+    VideoLAN.LibVLC.Windows 的 targets 会把 libvlc.dll / libvlccore.dll / plugins\** 作为
+    **Content** 加进来（CopyToOutputDirectory=PreserveNewest）。而单文件打包器会把
+    Content 里的 .dll 当原生库塞进 exe —— 结果发布目录里只剩 hrtfs / lua / *.lib，
+    libvlc.dll 不见了。
+
+    这不是理论：2026-10-27 用默认单文件参数发过一版，跑「playtest 自检」直接报
+    「libvlc 加载：失败：Dll was not found.」——因为在 exe 里，而 PlaybackEngine 是按
+    {exe 目录}/libvlc/{rid}/ 去找的。
+
+    ExcludeFromSingleFile 是打包器认识的开关：带这个元数据的文件不进 bundle，
+    原样留在 exe 旁边。target 的时机很重要 —— 必须等包的
+    CollectVlcFilesToCopyWindows 跑完（那时 Content 才存在），又早于 PrepareForBundle。
+  -->
+  <Target Name="KeepLibVlcOutsideBundle"
+          AfterTargets="CollectVlcFilesToCopyWindows"
+          BeforeTargets="PrepareForBundle">
+    <ItemGroup>
+      <Content Update="@(Content)"
+               ExcludeFromSingleFile="true"
+               Condition="$([System.String]::Copy('%(Content.Link)').StartsWith('libvlc\'))" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    发布目录里不该出现第三方包的 .pdb：SkiaSharp / HarfBuzzSharp 的原生符号文件
+    加起来 101 MB（实测 libSkiaSharp.pdb 81 MB + libHarfBuzzSharp.pdb 20 MB），
+    对最终用户毫无用处。DebugType=none 只管我们自己的程序集，管不到包里的 pdb，
+    所以在这里按目录兜底删一遍。
+  -->
+  <Target Name="TrimPublishOutput" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishJunk Include="$(PublishDir)*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(PublishJunk)" />
+  </Target>
+
+</Project>

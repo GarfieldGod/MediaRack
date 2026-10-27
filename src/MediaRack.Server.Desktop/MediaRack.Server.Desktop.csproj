@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      WinExe 而不是 Exe：双击时不该弹一个黑色控制台窗口。
+      代价是没有 Console 输出，所有诊断信息走日志文件与托盘气泡。
+    -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!--
+      原生客户端窗口用 WPF，托盘仍是 WinForms（两者可在同一项目共存）。
+      选 WPF 而不是 WinForms 画列表：虚拟化面板 + XAML 绑定 + 图片异步解码是海报墙的刚需，
+      WinForms 的 ListView 虚拟模式要自己写一切。
+    -->
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.0.0</Version>
+    <!-- 双击的那个东西就叫 MediaRack.exe，不带 Desktop 后缀。 -->
+    <AssemblyName>MediaRack</AssemblyName>
+    <RootNamespace>MediaRack.Server.Desktop</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MediaRack.Server\MediaRack.Server.csproj" />
+  </ItemGroup>
+
+  <!--
+    WinForms 那套隐式 using 只有 System / System.Drawing / System.Windows.Forms / Linq / 集合 / Threading，
+    **不含 System.IO**（跟 ASP.NET 那套不一样）。托盘壳里到处是 Path / Directory / File，
+    所以在项目级补一条，省得每个文件各写一行 using。
+  -->
+  <ItemGroup>
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <!--
+    这里**故意不引 LibVLCSharp / VideoLAN.LibVLC.Windows**。
+    桌面壳只是「托盘 + 配置向导 + 同进程托管 Server」，播放器在 MediaRack.Client 里（libvlc），
+    管理页的播放走浏览器 <video>（服务端 remux）。所以壳自己一行 LibVLC 代码都没有，
+    引了只会把那 300 MB 级的原生库塞进单文件产物，包体直接翻倍。
+  -->
+
+
+  <!--
+    发布产物里只该有「双击就能跑的那一个 exe」，多余文件会让拿到包的人以为要整包一起拷。
+    单文件已经把 Server 塞进 bundle 了，它的 runtimeconfig/deps 是给 dotnet.exe 启动用的，
+    桌面壳走 AppHost，不需要也不能用——留着纯是噪音。
+    放在 AfterTargets="Publish"：删的是**输出目录**里的内容，源码 Libraries 一行不动。
+  -->
+  <Target Name="TrimPublishOutput" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishJunk Include="$(PublishDir)mediarack-server.runtimeconfig.json" />
+      <PublishJunk Include="$(PublishDir)mediarack-server.deps.json" />
+      <PublishJunk Include="$(PublishDir)*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(PublishJunk)" />
+  </Target>
+
+</Project>

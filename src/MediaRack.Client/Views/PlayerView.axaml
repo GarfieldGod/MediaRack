@@ -1,0 +1,181 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:MediaRack.Client.ViewModels"
+             xmlns:vlc="clr-namespace:LibVLCSharp.Avalonia;assembly=LibVLCSharp.Avalonia"
+             x:Class="MediaRack.Client.Views.PlayerView"
+             x:DataType="vm:PlayerViewModel"
+             Focusable="True"
+             Background="#0A0A0C">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.ctltxt">
+            <Setter Property="Foreground" Value="#B3FFFFFF" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.title">
+            <Setter Property="Foreground" Value="#F2FFFFFF" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="MaxLines" Value="1" />
+        </Style>
+        <!-- 控制条按钮统一压扁：默认 Button 的内边距在 60 多个像素高的一行里太肥 -->
+        <Style Selector="Button.ctl">
+            <Setter Property="Padding" Value="11,4" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.ctl.icon">
+            <Setter Property="Padding" Value="9,4" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+    </UserControl.Styles>
+
+    <!--
+        ⚠️ 为什么控制层不在画面上"浮"着：
+        VideoView 在 Windows 上是 NativeControlHost，画面由 libvlc 自己的原生窗口渲染，
+        原生窗口永远盖在 Avalonia 图层之上——同区域里的任何 Button/TextBlock 都看不见
+        （试过把它塞进 VideoView.Content，同样不渲染）。
+        所以走标准桌面播放器的分栏布局：上一条信息栏、中间视频、下一条控制栏，
+        三者各占各的行，谁都不重叠。
+
+        控制条的功能面与 APK 横屏控制层一致（进度、上一个/下一个、倍速、播放模式、
+        画面适配、静音、全屏），差别只在"手势换成键鼠"：APK 靠点按/横滑/双指，
+        这里靠按钮 + 快捷键。
+    -->
+    <Grid RowDefinitions="Auto,*,Auto" Background="#0A0A0C">
+
+        <!-- ═══ 顶部：返回 + 标题 + 连播位置 + 引擎信息 ═══ -->
+        <Border Grid.Row="0" x:Name="TopBar" Background="#16161A" Padding="12,7"
+                BorderBrush="#24FFFFFF" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="14">
+                <Button Grid.Column="0" Content="←  返回" Padding="12,5" Classes="ctl"
+                        Command="{Binding CloseCommand}" VerticalAlignment="Center" />
+
+                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Title}" Classes="title" />
+                    <TextBlock Text="{Binding Subtitle}" Classes="ctltxt" FontSize="11"
+                               TextTrimming="CharacterEllipsis" MaxLines="1" Opacity="0.65" />
+                </StackPanel>
+
+                <!-- 连播位置：`连播：稍后再看 · 3/12`。单条播放时整块隐藏 -->
+                <Border Grid.Column="2" Background="#1FFFFFFF" CornerRadius="10" Padding="9,3"
+                        VerticalAlignment="Center" IsVisible="{Binding HasQueue}">
+                    <TextBlock Text="{Binding QueueText}" FontSize="11.5" Foreground="#E6FFFFFF" />
+                </Border>
+
+                <TextBlock Grid.Column="3" Text="{Binding EngineLabel}" Classes="ctltxt"
+                           Opacity="0.5" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <!-- ═══ 中间：画面 ═══ -->
+        <vlc:VideoView Grid.Row="1" x:Name="Video" />
+
+        <!-- 加载 / 转封装 / 错误：压在视频区中央（这块区域归 Avalonia 画） -->
+        <Border Grid.Row="1" Background="#C7000000"
+                IsVisible="{Binding ShowCenter}"
+                HorizontalAlignment="Center" VerticalAlignment="Center"
+                CornerRadius="10" Padding="28,20" MinWidth="280">
+            <StackPanel Spacing="12" HorizontalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200" Height="3"
+                             IsVisible="{Binding IsLoading}" />
+                <TextBlock Text="{Binding CenterText}" Foreground="White"
+                           TextWrapping="Wrap" MaxWidth="420" TextAlignment="Center"
+                           HorizontalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center"
+                            IsVisible="{Binding HasError}">
+                    <Button Content="重试" Command="{Binding RetryCommand}" />
+                    <Button Content="返回" Command="{Binding CloseCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ 底部：进度 + 控制 ═══ -->
+        <Border Grid.Row="2" Background="#16161A" Padding="14,6,14,8"
+                BorderBrush="#24FFFFFF" BorderThickness="0,1,0,0">
+            <StackPanel Spacing="5">
+
+                <!-- 进度条：拖动时只改预览值，松手才 seek（见 PlayerView.axaml.cs） -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <Slider Grid.Column="0" x:Name="Seek"
+                            Minimum="0" Maximum="100" Height="20" VerticalAlignment="Center"
+                            Value="{Binding SeekPercent, Mode=TwoWay}"
+                            IsEnabled="{Binding IsSeekable}" />
+                    <TextBlock Grid.Column="1" Text="{Binding TimeText}" Classes="ctltxt"
+                               MinWidth="104" TextAlignment="Right" />
+                </Grid>
+
+                <!-- 控制行：播放三件套 | 跳转 | 倍速 | 模式 | 画面 | 声音 | …… | 全屏 -->
+                <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="12">
+
+                    <!-- 左：上一个 / 播放暂停 / 下一个 -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                        <Button Classes="ctl" MinWidth="66" Content="上一个"
+                                Command="{Binding PrevCommand}" IsEnabled="{Binding HasPrev}"
+                                ToolTip.Tip="上一个（P）" />
+                        <Button Classes="ctl" MinWidth="72" Content="{Binding PlayButtonText}"
+                                Command="{Binding TogglePlayCommand}"
+                                ToolTip.Tip="播放 / 暂停（空格）" />
+                        <Button Classes="ctl" MinWidth="66" Content="下一个"
+                                Command="{Binding NextCommand}" IsEnabled="{Binding HasNext}"
+                                ToolTip.Tip="下一个（N）" />
+                        <Button Classes="ctl" Content="−10s" Command="{Binding Back10Command}"
+                                ToolTip.Tip="快退 10 秒（←）" />
+                        <Button Classes="ctl" Content="+10s" Command="{Binding Forward10Command}"
+                                ToolTip.Tip="快进 10 秒（→）" />
+                    </StackPanel>
+
+                    <!-- 中左：倍速 / 播放模式 / 画面适配 -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                        <ComboBox x:Name="SpeedBox" Width="86" MinHeight="30" FontSize="12.5"
+                                  VerticalAlignment="Center"
+                                  SelectedIndex="{Binding SpeedIndex, Mode=TwoWay}"
+                                  ToolTip.Tip="倍速（[ ] 循环切换）">
+                            <ComboBoxItem>0.5×</ComboBoxItem>
+                            <ComboBoxItem>0.75×</ComboBoxItem>
+                            <ComboBoxItem>1.0×</ComboBoxItem>
+                            <ComboBoxItem>1.25×</ComboBoxItem>
+                            <ComboBoxItem>1.5×</ComboBoxItem>
+                            <ComboBoxItem>2.0×</ComboBoxItem>
+                        </ComboBox>
+
+                        <Button Classes="ctl" Content="{Binding ModeText}" MinWidth="78"
+                                Command="{Binding CycleModeCommand}"
+                                ToolTip.Tip="播放模式：播完暂停 → 循环播放 → 自动切集（L）" />
+
+                        <Button Classes="ctl" Content="{Binding FitText}" MinWidth="56"
+                                Command="{Binding ToggleCoverCommand}"
+                                ToolTip.Tip="适应窗口 / 铺满裁边（C）" />
+                    </StackPanel>
+
+                    <!-- 中右：静音 + 音量 -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <Button Classes="ctl" Content="{Binding MuteText}" MinWidth="66"
+                                Command="{Binding ToggleMuteCommand}"
+                                ToolTip.Tip="静音（M）" />
+                        <Slider x:Name="Vol" Width="96" Minimum="0" Maximum="100"
+                                VerticalAlignment="Center"
+                                Value="{Binding Volume, Mode=TwoWay}"
+                                ToolTip.Tip="音量（↑↓）" />
+                    </StackPanel>
+
+                    <!-- 右侧留白区：状态 / 续播提示 -->
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="14"
+                                VerticalAlignment="Center" Margin="6,0">
+                        <TextBlock Text="{Binding Status}" Classes="ctltxt" Opacity="0.6"
+                                   IsVisible="{Binding HasStatus}" />
+                        <TextBlock Text="{Binding Hint}" Classes="ctltxt"
+                                   Foreground="#D9FFD76A" IsVisible="{Binding HasHint}" />
+                    </StackPanel>
+
+                    <Button Grid.Column="4" Classes="ctl" Content="{Binding FullscreenText}"
+                            MinWidth="78" Command="{Binding ToggleFullscreenCommand}"
+                            ToolTip.Tip="全屏（F / F11）" />
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

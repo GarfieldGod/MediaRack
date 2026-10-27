@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.0.0</Version>
+    <AssemblyName>mediarack-server</AssemblyName>
+    <RootNamespace>MediaRack.Server</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MediaRack.Core\MediaRack.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 配对二维码（主路径见 docs/design.md §10）：服务端出 SVG，浏览器 img 直用，不引前端 JS 库 -->
+  <ItemGroup>
+    <PackageReference Include="QRCoder" />
+  </ItemGroup>
+
+  <!--
+    Web 管理页编进程序集，而不是留在 wwwroot 等拷贝。
+    这样「一个 exe 拿走就能跑」，也不会出现「忘了拷 wwwroot 导致首页 404」。
+  -->
+  <ItemGroup>
+    <Content Remove="wwwroot\**" />
+    <EmbeddedResource Include="wwwroot\**\*" />
+  </ItemGroup>
+
+  <!--
+    Development 配置不跟着发布走：单文件交付里出现一个 appsettings.Development.json，
+    下一个人会以为要改它。生产配置就 appsettings.json 一份。
+  -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+</Project>

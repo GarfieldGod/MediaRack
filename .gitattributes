@@ -1,0 +1,26 @@
+# 换行符策略：三端同仓，Windows / Linux / macOS 都会 checkout 同一份工作树。
+#
+# 默认不做全局归一化：这个仓库里既有 C#、Kotlin 源码，也有 Windows 上生成的
+# 二进制与 SQL 脚本，一律按原样存原样取最不容易出意外（也免得别人的
+# 全局 core.autocrlf=true 把这棵树整体改写，产生一个全文件 diff）。
+# 只对"换行符错了就会真的坏掉"的文件显式钉死：
+#
+#   gradlew / *.sh   在 Linux/macOS 上由 sh 直接执行，CRLF 会让 shebang 变成
+#                    "/bin/sh^M" → 报 bad interpreter。必须是 LF。
+#   *.bat / *.cmd    在 cmd.exe 上执行，LF 会让某些行拼接到一起，必须是 CRLF。
+*           -text
+gradlew     text eol=lf
+*.sh        text eol=lf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# 二进制：明确标出来，git 就不会尝试做 diff / 合并，也不会误判为文本而改行尾。
+*.jar       binary
+*.apk       binary
+*.aab       binary
+*.exe       binary
+*.dll       binary
+*.so        binary
+*.png       binary
+*.jpg       binary
+*.zip       binary
