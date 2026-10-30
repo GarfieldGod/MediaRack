@@ -337,16 +337,6 @@ class ApiClient(
         )
     }
 
-    /** 整体替换条目的收藏夹归属（"移动到另一个收藏夹"= 只留目标夹）。 */
-    fun replaceFavoriteMembership(source: String, key: String, favoriteIds: List<String>) {
-        executeVoid(
-            apiPost(
-                "/api/v1/meta/${enc(source)}/${enc(key)}",
-                MediaPatchBody(collections = favoriteIds),
-            )
-        )
-    }
-
     fun mediaDetail(source: String, key: String): MediaDetail =
         execute(apiGet("/api/v1/media/$source/$key"))
 

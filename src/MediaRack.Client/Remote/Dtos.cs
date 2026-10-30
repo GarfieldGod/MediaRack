@@ -188,13 +188,6 @@ public sealed class ProgressPatch
     public bool? Completed { get; set; }
 }
 
-/// <summary>POST /api/v1/meta/{source}/{key}。语义：JSON 里为 null = 不改这个字段。</summary>
-public sealed class MediaPatchBody
-{
-    public int? Rotation { get; set; }
-    public List<string>? Collections { get; set; }
-}
-
 /// <summary>契约错误体（契约 Error schema），可直接上屏。</summary>
 internal sealed class ErrorBody
 {

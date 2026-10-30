@@ -1,4 +1,11 @@
-# 每次推 main 就构建四件产物并发一个 Release。
+# 推 main 只构建 + 存 artifact；**打 tag 才发 Release**。
+#
+# 为什么不再"每推一次就发一个版本"：main 上一个下午能推十次，每次都占一个 tag、一条 Release，
+# 发布页被自己的构建记录淹没，真要发版时反而找不到。现在分工是——
+#   push main      -> 测试 + 四件产物 -> artifact（30 天，给自查用，不对外）
+#   push tag v*    -> 同上 + 以**这个 tag** 为版本号发 Release
+#   workflow_dispatch -> 同上（默认只出 artifact；在任意 ref 上手跑也不发版）
+# 发版因此变成一次显式动作：先本地 `git tag v1.0.0 && git push origin v1.0.0`。
 #
 # 为什么全在一个 job 里、而且跑在 windows-latest：
 #   桌面壳（MediaRack.Server.Desktop）是 net10.0-windows + WinForms + WPF，**只能在 Windows 上构建**
@@ -12,26 +19,24 @@
 #   MediaRack-Client-Windows-x64.zip (exe + libvlc/)                   多文件  -> 只能发 zip
 #   「单文件」这件事是有代价的：服务端的 appsettings.json 已经编进程序集、说明文字也不进包，
 #   否则一个 exe 拿不走。详见 MediaRack.Server.csproj 与 scripts/release/publish.sh。
-#
-# 版本号：v<YYYY.MM.DD>.<run_number>。三端各自的 <Version> 互不相干（client 0.1.0 / server 1.0.0 /
-# android 0.7.0-feed），硬凑一个语义化版本只会显得像在撒谎，所以用"日期 + 构建序"标记流水产物，
-# 真正的语义化版本等哪天真要发 1.0 时再打 tag。
 
-name: release
+name: build
 
 on:
   push:
     branches: [main]
+    # 只有 v 开头的 tag 才走发布；别的 tag（比如临时标记）只跑构建。
+    tags: ["v*"]
   # 手动补一次构建：改了 runner、想重发、或 CI 配置本身在调的时候用。
   workflow_dispatch:
 
-# gh release create 要写 Releases，默认的只读 token 不够。
+# 只有发布那一步要写 Releases，默认的只读 token 不够。
 permissions:
   contents: write
 
-# 连推两次 main 时，前一次没跑完就别发版了——同一时刻只允许一条发布流水线。
+# 同一个 ref 连推两次时，前一次没跑完就别继续了。tag 各走各的 group。
 concurrency:
-  group: release-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -40,8 +45,8 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
 
 jobs:
-  release:
-    name: 构建 + 发布
+  build:
+    name: 构建（tag 时发布）
     runs-on: windows-latest
 
     steps:
@@ -122,7 +127,7 @@ jobs:
 
       # publish.sh 在旧目录删不掉时会降级到 <名字>-<时间戳>/ 继续，这在 CI 上不该发生
       # （没人占着 exe），但真发生了下面按固定路径取文件就会失败——所以先显式核对一遍，
-      # 免得把一个"看起来发成功了、其实附件是上一次的"版本推出去。
+      # 免得把一个"看起来构建成功了、其实附件是上一次的"版本发出去。
       - name: 校验产物
         shell: bash
         run: |
@@ -153,16 +158,34 @@ jobs:
             }
           fi
 
-      - name: 发布
+      # 每次构建（含 push main）都存一份，30 天后自动清掉。
+      # artifact 下载下来是个 zip 包装：三个单文件 + 客户端那个 zip（客户端因此会套两层，
+      # 这是 artifact 机制决定的；要干净的单个文件就等打 tag 发的 Release）。
+      - name: 存 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaRack-build-${{ github.run_number }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            publish/MediaRack-Server-Desktop-Windows-x64/MediaRack-Server-Desktop.exe
+            publish/MediaRack-Server-Windows-x64/MediaRack-Server.exe
+            publish/MediaRack-Client-Android/MediaRack-Client.apk
+            publish/MediaRack-Client-Windows-x64.zip
+
+      # 只有打 tag（v*）才发 Release，tag 名就是版本号 —— 发布是显式动作，
+      # main 上的日常提交只留在 artifact 里。
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v$(date +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          TAG="$GITHUB_REF_NAME"
           echo "版本：$TAG"
 
-          # 重跑同一条 workflow 时 tag 已经存在，删了重发，别在重跑上失败。
+          # 删了 tag 重新打（或 force push tag）时旧 Release 还在，清掉再发，别在重发上失败。
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes --cleanup-tag
           fi

@@ -263,11 +263,6 @@ public sealed class ApiClient : IDisposable
         WriteVoid(HttpMethod.Post, $"/api/v1/progress/{Enc(source)}/{Enc(key)}",
             new ProgressPatch { PosMs = posMs, Completed = completed }, ct);
 
-    /// <summary>写入用户覆盖的旋转角（0/90/180/270）。与容器自带 rotation 元数据正交。</summary>
-    public Task SetRotationAsync(string source, string key, int rotation, CancellationToken ct = default) =>
-        WriteVoid(HttpMethod.Post, $"/api/v1/meta/{Enc(source)}/{Enc(key)}",
-            new MediaPatchBody { Rotation = rotation }, ct);
-
     public Task<MediaDetailDto> MediaDetailAsync(string source, string key, CancellationToken ct = default) =>
         GetJson<MediaDetailDto>($"/api/v1/media/{Enc(source)}/{Enc(key)}", ct);
 

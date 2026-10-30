@@ -130,8 +130,14 @@ python scripts/check/check_hygiene.py --strict    # 警告也算失败
 
 ## CI（`.github/workflows/release.yml`）
 
-push 到 main 就构建并发布四件产物，tag 是 `v<YYYY.MM.DD>.<run_number>`（三端 `<Version>` 互不相干，
-硬凑语义化版本等于撒谎）。
+分两档：**推 main 只构建 + 存 artifact（30 天），打 `v*` tag 才发 Release**，tag 名即版本号。
+每推一次就发一个版本会把发布页淹掉，也让发版失去「显式动作」的含义。
+
+- 发版流程：`git tag v1.0.0 && git push origin v1.0.0`。tag 只标记「这次打包是给人用的」，
+  **不要拿它去统一三端的 `<Version>`**（client / server / android 各走各的，硬凑一个语义化版本等于撒谎）。
+- `发布 Release` 那一步带 `if: startsWith(github.ref, 'refs/tags/v')`，`workflow_dispatch` 手跑只出 artifact。
+- artifact 下载下来必然是 zip 包装 ⇒ 客户端那个 zip 会套两层。这是 artifact 机制决定的，
+  要干净的单文件就走 tag → Release。
 
 - 只有一个 job，跑在 `windows-latest`：桌面壳是 net10.0-windows，必然要一台 Windows 机器，
   其余三件没必要再拆去别的 runner 传 300 MB 产物。

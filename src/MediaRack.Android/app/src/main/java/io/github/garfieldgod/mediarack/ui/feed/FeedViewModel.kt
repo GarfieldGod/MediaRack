@@ -914,6 +914,47 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 收藏夹改名。返回 null = 成功，否则是给对话框显示的错误文案。
+     *
+     * 名称只是显示值：改它不动夹子里的条目，也不影响归属（服务端 `PATCH /favorites/{id}`）。
+     */
+    suspend fun renameFavorite(serverId: Long, favoriteId: String, name: String): String? =
+        withContext(Dispatchers.IO) {
+            val trimmed = name.trim()
+            if (trimmed.isEmpty()) return@withContext "名称不能为空"
+            val server = db.serverDao().getById(serverId) ?: return@withContext "服务器配置已删除"
+            try {
+                ApiClient(server.baseUrl, server.token).renameFavorite(favoriteId, trimmed)
+                postMessage("已改名为「$trimmed」", 2000)
+                null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (e is NetworkException) "离线状态不能改名" else "改名失败：${e.message}"
+            }
+        }
+
+    /**
+     * 删除收藏夹。返回 null = 成功，否则是给对话框显示的错误文案。
+     *
+     * 服务端在一个事务里删掉 `favorite` / `favorite_item` / `favorite_collection` 三类行，
+     * **不动源里的视频文件**——这里删的是「收藏关系」，不是内容。
+     */
+    suspend fun deleteFavorite(serverId: Long, favoriteId: String, name: String): String? =
+        withContext(Dispatchers.IO) {
+            val server = db.serverDao().getById(serverId) ?: return@withContext "服务器配置已删除"
+            try {
+                ApiClient(server.baseUrl, server.token).deleteFavorite(favoriteId)
+                postMessage("已删除收藏夹「$name」", 2000)
+                null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (e is NetworkException) "离线状态不能删除收藏夹" else "删除失败：${e.message}"
+            }
+        }
+
+    /**
      * 把收藏夹里的一条移到另一个夹（[toFavoriteId] = null 表示只移出本夹）。
      *
      * 顺序是**先加后减**：中途失败最坏是"两个夹里都有"，不会把条目弄丢。

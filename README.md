@@ -88,9 +88,13 @@ mrack verify-readonly --source bili --hash
 - APK 是 **debug 签名**，与开发期 adb 装的包同一证书，可 `-r` 覆盖升级（release 需要 keystore，密钥不进仓库）
 - APK 文件名不带版本号（版本打在发布页 tag 上）：下载、侧载、CI 上传三处只记一个名字
 
-**推 main 就自动出这一套**：`.github/workflows/release.yml` 在 `windows-latest` 上跑 `dotnet test` +
-`./build.sh`，然后建一个 `v<YYYY.MM.DD>.<构建序>` 的 Release：单文件那三项直接发文件，客户端发 zip。
-没有 GitHub remote 时它不会跑；本地构建照旧 `./build.sh`。
+**CI 分两档**：`.github/workflows/release.yml` 在 `windows-latest` 上跑 `dotnet test` + `./build.sh`。
+
+- **推 main**：只把四件产物存成 artifact（保留 30 天），不建 Release
+- **打 `v*` tag**：额外发 Release，tag 名就是版本号，单文件那三项直接发文件、客户端发 zip
+
+发版因此是一次显式动作：`git tag v1.0.0 && git push origin v1.0.0`。
+本地构建照旧 `./build.sh`，与 CI 跑的是同一个脚本。
 - 前提：bash（Windows 上用 Git Bash）+ dotnet 10；Android 另需 JDK 21 与 Android SDK
   （在 `src/MediaRack.Android/local.properties` 里写 `sdk.dir`；该文件按机器而异，不入库）
 

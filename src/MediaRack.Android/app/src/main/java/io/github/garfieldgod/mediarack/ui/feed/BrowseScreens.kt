@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -190,6 +192,9 @@ fun FavoritesScreen(
     /** 新建夹子后重新拉列表（收藏夹列表没有别的刷新时机）。 */
     var reloadTick by remember { mutableStateOf(0) }
     var creating by remember { mutableStateOf(false) }
+    /** 正在改名的夹子 / 正在确认删除的夹子（两个动作共用行尾「⋯」）。 */
+    var renaming by remember { mutableStateOf<Pair<Long, Favorite>?>(null) }
+    var deleting by remember { mutableStateOf<Pair<Long, Favorite>?>(null) }
     val servers by vm.servers.collectAsState(initial = emptyList())
     // 收藏是源级的：当前选中某个源时，只展示该源的收藏夹；「全部」才合并展示（夹子名标注来源）
     val filter by vm.filter.collectAsState()
@@ -264,7 +269,10 @@ fun FavoritesScreen(
                             l.rows,
                             serverNames = if (scoped == null) servers.associate { it.id to it.name } else emptyMap(),
                             scoped = scoped != null,
-                        ) { nav.favorite = it }
+                            onOpen = { nav.favorite = it },
+                            onRename = { renaming = it },
+                            onDelete = { deleting = it },
+                        )
                     } else {
                         FavoriteCollectionsList(vm, l.rows) { serverId, c ->
                             nav.collection = CollectionRef(serverId, c.id, c.name, c.kind)
@@ -288,6 +296,131 @@ fun FavoritesScreen(
             },
         )
     }
+
+    renaming?.let { row ->
+        RenameFavoriteDialog(
+            row = row,
+            vm = vm,
+            onDismiss = { renaming = null },
+            onRenamed = {
+                renaming = null
+                reloadTick++
+            },
+        )
+    }
+
+    deleting?.let { row ->
+        DeleteFavoriteDialog(
+            row = row,
+            vm = vm,
+            onDismiss = { deleting = null },
+            onDeleted = {
+                deleting = null
+                reloadTick++
+            },
+        )
+    }
+}
+
+/**
+ * 收藏夹改名。名称只是显示值，改它不动夹子里的条目与来源归属。
+ */
+@Composable
+private fun RenameFavoriteDialog(
+    row: Pair<Long, Favorite>,
+    vm: FeedViewModel,
+    onDismiss: () -> Unit,
+    onRenamed: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var name by remember(row) { mutableStateOf(row.second.name) }
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("重命名收藏夹") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(40); error = null },
+                    label = { Text("名称") },
+                    singleLine = true,
+                    enabled = !saving,
+                )
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = Color(0xFFE05B5B), fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                // 名称没变就不给点：改名接口每次都写一遍 rev，没必要制造一次假修改
+                enabled = !saving && name.isNotBlank() && name.trim() != row.second.name,
+                onClick = {
+                    scope.launch {
+                        saving = true
+                        val err = vm.renameFavorite(row.first, row.second.id, name)
+                        saving = false
+                        if (err == null) onRenamed() else error = err
+                    }
+                },
+            ) { Text(if (saving) "保存中…" else "保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") } },
+    )
+}
+
+/**
+ * 删收藏夹。服务端一个事务里删掉 `favorite` / `favorite_item` / `favorite_collection`，
+ * 但**不动源里的视频文件**——「取消收藏」和「删文件」是两件事，文案必须说清，
+ * 否则用户会以为删夹子等于删片子。
+ */
+@Composable
+private fun DeleteFavoriteDialog(
+    row: Pair<Long, Favorite>,
+    vm: FeedViewModel,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("删除收藏夹") },
+        text = {
+            Column {
+                Text(
+                    "「${row.second.name}」里的 ${row.second.itemCount} 个视频会从收藏夹移除，" +
+                        "视频文件本身不受影响。",
+                    fontSize = 14.sp,
+                    color = Color(0xFFC9CDD4),
+                )
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = Color(0xFFE05B5B), fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !saving,
+                onClick = {
+                    scope.launch {
+                        saving = true
+                        val err = vm.deleteFavorite(row.first, row.second.id, row.second.name)
+                        saving = false
+                        if (err == null) onDeleted() else error = err
+                    }
+                },
+            ) { Text(if (saving) "删除中…" else "删除", color = Color(0xFFE05B5B)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") } },
+    )
 }
 
 /**
@@ -364,6 +497,8 @@ private fun FavoriteList(
     /** 已按源过滤：计数是这个源里的，「收藏的合集」没按源过滤所以不并排显示。 */
     scoped: Boolean,
     onOpen: (Pair<Long, Favorite>) -> Unit,
+    onRename: (Pair<Long, Favorite>) -> Unit,
+    onDelete: (Pair<Long, Favorite>) -> Unit,
 ) {
     if (rows.isEmpty()) {
         EmptyHint("还没有收藏夹。\n（在视频页点 ❤ 收藏，需要联网）")
@@ -372,50 +507,81 @@ private fun FavoriteList(
 
     LazyColumn(Modifier.fillMaxSize()) {
         items(rows, key = { "${it.first}|${it.second.id}" }) { row ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpen(row) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
+            var menuOpen by remember { mutableStateOf(false) }
+            Box {
+                Row(
                     Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFFFB7299).copy(alpha = 0.16f)),
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .clickable { onOpen(row) }
+                        .padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Default.Star, null, tint = Color(0xFFFB7299), modifier = Modifier.size(20.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            row.second.name,
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        serverNames[row.first]?.let { src ->
-                            Spacer(Modifier.width(6.dp))
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFFB7299).copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Default.Star, null, tint = Color(0xFFFB7299), modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "· $src",
-                                color = Color(0xFF8B919C),
-                                fontSize = 12.sp,
+                                row.second.name,
+                                color = Color.White,
+                                fontSize = 15.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                             )
+                            serverNames[row.first]?.let { src ->
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "· $src",
+                                    color = Color(0xFF8B919C),
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
+                        Text(
+                            // 按源过滤时只报视频数：合集数是全库口径，两个数字并排会自相矛盾。
+                            if (scoped) "${row.second.itemCount} 个视频"
+                            else "${row.second.itemCount} 个视频 · ${row.second.collectionCount} 个合集",
+                            color = Color(0xFF8B919C),
+                            fontSize = 12.sp,
+                        )
                     }
-                    Text(
-                        // 按源过滤时只报视频数：合集数是全库口径，两个数字并排会自相矛盾。
-                        if (scoped) "${row.second.itemCount} 个视频"
-                        else "${row.second.itemCount} 个视频 · ${row.second.collectionCount} 个合集",
-                        color = Color(0xFF8B919C),
-                        fontSize = 12.sp,
+                    // 行尾「⋯」：改名 / 删除。夹子是用户自己的东西，两个动作该在列表上就能做，
+                    // 不必先点进夹子再找设置（以前只能在 PC 管理台改）。
+                    Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "收藏夹操作",
+                            tint = Color(0xFF8B919C),
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clickable { menuOpen = true },
+                        )
+                    }
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("重命名") },
+                        onClick = {
+                            menuOpen = false
+                            onRename(row)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("删除", color = Color(0xFFE05B5B)) },
+                        onClick = {
+                            menuOpen = false
+                            onDelete(row)
+                        },
                     )
                 }
             }
