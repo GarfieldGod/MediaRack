@@ -76,12 +76,18 @@ public sealed class ScanService(LibraryDatabase db, string metaRoot)
             var layout = LayoutDetector.Resolve(folder);
             var scoped = ScopeToFolder(source, folder, layout);
 
+            // 探测后端有两种：ffprobe（本机装了 ffmpeg）和 NullProbe（没装，什么都探不到）。
+            // 装饰器必须套在**两种**外面：缓存命中就回放库里的元数据，这件事跟有没有 ffprobe
+            // 无关——恰恰是没装 ffprobe 的机器最需要它（库里早有值，不该重扫一遍全变成未知）。
+            // 曾经这里是三元的两个分支各造一个 scanner，装饰器只挂在 ffprobe 那支上，
+            // 于是"没有 ffprobe ⇒ 缓存一次都不查"：扫描结果 duration/width/height 全 null，
+            // 客户端只能显示未知时长（2026-10-30 CI 上被 ProbeCacheTests 抓出来）。
+            IMediaProbe inner = availability!.Available ? new FfProbe(tools!) : new NullProbe();
+
             var result = layout == SourceLayout.Dual
                 ? new DualScanner().Scan(scoped, verify, progress, ct)
-                : availability!.Available
-                    ? new SingleScanner(decorateProbe?.Invoke(folder, new FfProbe(tools!)) ?? new FfProbe(tools!))
-                        .Scan(scoped, progress, ct)
-                    : new SingleScanner(new NullProbe()).Scan(scoped, progress, ct);
+                : new SingleScanner(decorateProbe?.Invoke(folder, inner) ?? inner)
+                    .Scan(scoped, progress, ct);
 
             report.OkCount += result.Report.OkCount;
             report.CorruptCount += result.Report.CorruptCount;

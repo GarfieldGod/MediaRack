@@ -103,6 +103,46 @@ public sealed class ProbeCacheTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// 没装 ffmpeg 的机器上，重扫同样必须走缓存回放。
+    /// <para>
+    /// 这是 CI 抓出来的回归：ScanOnly 曾在 availability=false 时另造一个 NullProbe 的
+    /// SingleScanner，缓存装饰器只挂在 ffprobe 那一支上 —— 结果"没有 ffprobe ⇒ 缓存一次都不查"，
+    /// 库里明明存着时长/分辨率，重扫却全变成未知。开发机装了 ffmpeg，所以本地一直是绿的，
+    /// 直到在 GitHub runner 上跑才红（2026-10-30）。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ScanOnly_WithoutFfprobe_StillReplaysCachedMetadata()
+    {
+        var a = SeedFile("a.mp4");
+        new MediaRepository(_db).Upsert("cachetest", [a]);
+
+        var oldFfmpeg = Environment.GetEnvironmentVariable(FfTools.FfmpegEnvVar);
+        var oldFfprobe = Environment.GetEnvironmentVariable(FfTools.FfprobeEnvVar);
+        try
+        {
+            // 指到不存在的路径：Locate 原样采用环境变量的值，Check 因此判定不可用。
+            Environment.SetEnvironmentVariable(FfTools.FfmpegEnvVar, Path.Combine(_root, "missing-ffmpeg.exe"));
+            Environment.SetEnvironmentVariable(FfTools.FfprobeEnvVar, Path.Combine(_root, "missing-ffprobe.exe"));
+
+            var counting = new CountingProbe(new FakeProbe());
+            var scan = RescanWith(ProbeCache.Load(_db, "cachetest", _root), counting);
+
+            // Calls==0 有两种可能：命中缓存，或者压根没用装饰器（走了 NullProbe）。
+            // DurationMs 有值才能证明是前者——这正是这条测试要钉住的东西。
+            Assert.Equal(0, counting.Calls);
+            var entry = Assert.Single(scan.Result.Entries);
+            Assert.Equal(6000, entry.DurationMs);
+            Assert.Equal(3840, entry.Height);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(FfTools.FfmpegEnvVar, oldFfmpeg);
+            Environment.SetEnvironmentVariable(FfTools.FfprobeEnvVar, oldFfprobe);
+        }
+    }
+
     [Fact]
     public void Rescan_ModifiedFile_IsProbedAgain()
     {
