@@ -29,9 +29,16 @@ class Program
 
         // 自检分支都往控制台打中文结论：不显式设 UTF-8 的话，
         // 一旦输出被管道接走就会按系统 ANSI 编码（GBK）编码，终端里全是乱码
-        if (args.Any(a => a is "--selftest" or "--vmtest" or "--playtest" or "--connecttest"))
+        if (args.Any(a => a is "--selftest" or "--vmtest" or "--playtest" or "--connecttest" or "--shelltest"))
         {
             try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* 个别终端不支持 */ }
+        }
+
+        // 外壳骨架自检：不联网、不开窗口，只在主线程上驱动 ShellViewModel 的状态机
+        //   MediaRack.Client --shelltest
+        if (args.Contains("--shelltest"))
+        {
+            return MediaRack.Client.Tools.ShellTest.Run();
         }
 
         if (args.Contains("--server"))

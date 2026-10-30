@@ -1,0 +1,197 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:MediaRack.Client.ViewModels"
+             x:Class="MediaRack.Client.Views.MineView"
+             x:DataType="vm:MineViewModel">
+
+    <!--
+        「我的」页，与 Android 的 MineScreen 同构：
+        头部（返回 + 头像 + 库信息）→ 四宫格统计 → 继续观看 → 收藏的两个入口。
+
+        桌面没有下载功能，「已下载」「占用」恒为 0，但格子照手机排版保留——
+        位置对得上，将来真做了离线下载不用重排。
+    -->
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Opacity" Value="0.55" />
+            <Setter Property="Margin" Value="20,18,0,8" />
+        </Style>
+        <Style Selector="Border.stat">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseLowBrush}" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="0,12" />
+        </Style>
+        <Style Selector="TextBlock.statnum">
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.statlabel">
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Opacity" Value="0.55" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+        </Style>
+
+        <!-- 收藏 / 管理 的大入口行 -->
+        <Style Selector="Button.entry">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseLowBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Margin" Value="12,0,12,8" />
+        </Style>
+
+        <!-- 继续观看的卡：整块可点，底色只在悬停时亮 -->
+        <Style Selector="Button.cont">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Margin" Value="0,0,12,12" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        </Style>
+        <Style Selector="Button.cont:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer>
+        <StackPanel Spacing="0" Margin="0,0,0,28">
+
+            <!-- ═══ 头部 ═══ -->
+            <Border Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" Padding="10,12">
+                <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="12">
+                    <Button Grid.Column="0" Content="←" Command="{Binding BackCommand}"
+                            Background="Transparent" BorderThickness="0" FontSize="17"
+                            Padding="8,4" VerticalAlignment="Center"
+                            ToolTip.Tip="回到海报墙" />
+
+                    <Border Grid.Column="1" Width="46" Height="46" CornerRadius="23"
+                            Background="#33FB7299">
+                        <TextBlock Text="{Binding Avatar}" FontSize="22"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
+                        <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="Bold" />
+                        <TextBlock Text="{Binding Subtitle}" FontSize="11.5" Opacity="0.55" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Column="3" Text="{Binding SourceCountText}" FontSize="11.5"
+                               Opacity="0.55" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
+            <!-- ═══ 四宫格统计 ═══ -->
+            <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="10" Margin="14,14,14,0">
+                <Border Grid.Column="0" Classes="stat">
+                    <StackPanel>
+                        <TextBlock Text="{Binding LikedText}" Classes="statnum" />
+                        <TextBlock Text="收藏" Classes="statlabel" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Classes="stat">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DownloadText}" Classes="statnum" />
+                        <TextBlock Text="已下载" Classes="statlabel" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Classes="stat">
+                    <StackPanel>
+                        <TextBlock Text="{Binding WatchedText}" Classes="statnum" />
+                        <TextBlock Text="看过" Classes="statlabel" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="3" Classes="stat">
+                    <StackPanel>
+                        <TextBlock Text="{Binding BytesText}" Classes="statnum" />
+                        <TextBlock Text="占用" Classes="statlabel" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- ═══ 继续观看 ═══ -->
+            <StackPanel IsVisible="{Binding HasContinue}">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="继续观看" Classes="section" />
+                    <Button Grid.Column="1" Content="全部" FontSize="11" Padding="8,2" Margin="0,14,16,0"
+                            Background="Transparent" BorderThickness="0"
+                            Command="{Binding OpenContinueCommand}" />
+                </Grid>
+
+                <ItemsControl ItemsSource="{Binding Continue}" Margin="14,0,14,0">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:MediaCard">
+                            <Button Classes="cont" Width="176" Command="{Binding OpenCommand}"
+                                    CommandParameter="{Binding}" ToolTip.Tip="{Binding Title}">
+                                <StackPanel Spacing="5">
+                                    <Border Height="99" CornerRadius="8" ClipToBounds="True"
+                                            Background="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}">
+                                        <Grid>
+                                            <Image Source="{Binding Poster}" Stretch="UniformToFill"
+                                                   Loaded="OnPosterLoaded" />
+                                            <TextBlock Text="▶" FontSize="22" Opacity="0.3"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding !HasPoster}" />
+                                            <ProgressBar Value="{Binding ProgressPercent}" Minimum="0" Maximum="100"
+                                                         Height="3" VerticalAlignment="Bottom"
+                                                         IsVisible="{Binding HasProgress}" />
+                                        </Grid>
+                                    </Border>
+                                    <TextBlock Text="{Binding Title}" FontSize="12" MaxLines="2"
+                                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding ProgressText}" FontSize="11"
+                                               Foreground="{DynamicResource SystemAccentColorLight2}"
+                                               IsVisible="{Binding HasProgress}" />
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <!-- ═══ 收藏 ═══ -->
+            <TextBlock Text="收藏" Classes="section" />
+            <Button Classes="entry" Command="{Binding OpenLikedCommand}">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                    <Border Grid.Column="0" Width="36" Height="36" CornerRadius="10" Background="#33FB7299">
+                        <TextBlock Text="❤️" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                        <TextBlock Text="收藏的视频" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding LikedSubtitle}" FontSize="11" Opacity="0.55" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Text="›" FontSize="17" Opacity="0.45" VerticalAlignment="Center" />
+                </Grid>
+            </Button>
+
+            <Button Classes="entry" Command="{Binding OpenCollectionsCommand}">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                    <Border Grid.Column="0" Width="36" Height="36" CornerRadius="10" Background="#33FB7299">
+                        <TextBlock Text="📚" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                        <TextBlock Text="收藏的合集" FontSize="13" FontWeight="SemiBold" />
+                        <TextBlock Text="关注的 UP 主 / 文件夹" FontSize="11" Opacity="0.55" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Text="›" FontSize="17" Opacity="0.45" VerticalAlignment="Center" />
+                </Grid>
+            </Button>
+
+            <TextBlock Text="{Binding Error}" Foreground="#E5484D" FontSize="12" Margin="20,4,20,0"
+                       TextWrapping="Wrap" IsVisible="{Binding HasError}" />
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

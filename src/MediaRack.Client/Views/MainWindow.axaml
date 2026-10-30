@@ -1,32 +1,135 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:MediaRack.Client.ViewModels"
+        xmlns:views="clr-namespace:MediaRack.Client.Views"
         x:Class="MediaRack.Client.Views.MainWindow"
         x:DataType="vm:ShellViewModel"
         Width="1280" Height="800" MinWidth="900" MinHeight="560"
         Title="MediaRack">
 
+    <!--
+        外壳 = 顶栏 + 内容区 + 两个覆盖层（左抽屉 / 连接页），与 Android 一一对应：
+
+          ☰  MediaRack · 当前视图                    👤
+        ┌─────────────────────────────────────────────┐
+        │   海报墙（一个源都没连上时是空态）            │
+        └─────────────────────────────────────────────┘
+
+        ☰ 展开左抽屉（源列表 + 浏览 / 收藏夹），👤 进「我的」；
+        连接页是**覆盖层**不是页面——加源 / 改源都从抽屉点出来，关掉就回到刚才那张墙。
+    -->
+
+    <Window.Styles>
+        <Style Selector="Button.chrome">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.chrome:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundBaseMediumLowBrush}" />
+        </Style>
+        <Style Selector="Button.draweraction">
+            <Setter Property="Background" Value="{DynamicResource SystemAccentColor}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+    </Window.Styles>
+
     <Grid RowDefinitions="Auto,*">
 
         <!-- 壳顶栏。播放页切全屏时要整条收掉（只留画面 + 控制条），
              由 MainWindow.SetPlayerFullscreen 控制。 -->
-        <Border Grid.Row="0" x:Name="Chrome" Padding="16,10"
-                Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
-                <TextBlock Text="MediaRack" FontSize="16" FontWeight="Bold" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="{Binding ServerLabel}"
-                           VerticalAlignment="Center" Margin="16,0" Opacity="0.75" />
-                <Button Grid.Column="2" Content="＋ 添加源"
-                        Command="{Binding AddSourceCommand}"
-                        ToolTip.Tip="再连一个源；已经连着的不会被断开"
-                        IsVisible="{Binding IsConnected}" />
-                <Button Grid.Column="3" Content="断开当前"
-                        Command="{Binding DisconnectCommand}"
-                        IsVisible="{Binding IsConnected}" />
+        <Border Grid.Row="0" x:Name="Chrome" Padding="10,8"
+                Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
+                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="4">
+                <Button Grid.Column="0" Classes="chrome" Content="☰"
+                        Command="{Binding ToggleDrawerCommand}"
+                        ToolTip.Tip="源列表 / 浏览 / 收藏夹" />
+
+                <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="14" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis" />
+
+                <Button Grid.Column="2" Classes="chrome" Content="👤"
+                        Command="{Binding OpenMineCommand}"
+                        ToolTip.Tip="我的：统计 / 继续观看 / 收藏" />
             </Grid>
         </Border>
 
-        <ContentControl Grid.Row="1" Content="{Binding CurrentPage}" />
+        <Grid Grid.Row="1">
 
+            <!-- ═══ 内容区：海报墙 / 我的 ═══ -->
+            <ContentControl Content="{Binding CurrentPage}" />
+
+            <!-- ═══ 空态：一个源都没连上 ═══ -->
+            <StackPanel IsVisible="{Binding IsEmpty}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Spacing="10" MaxWidth="460">
+                <TextBlock Text="▶" FontSize="44" Opacity="0.14" HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding EmptyTitle}" FontSize="15" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding EmptyText}" FontSize="12" Opacity="0.55"
+                           TextAlignment="Center" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,6,0,0">
+                    <Button Content="＋ 添加源" Command="{Binding AddSourceCommand}" Padding="16,7" />
+                    <Button Content="打开源列表" Command="{Binding ToggleDrawerCommand}" Padding="16,7" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- ═══ 左抽屉：遮罩 + 面板 ═══ -->
+            <Border Background="#66000000" IsVisible="{Binding IsDrawerOpen}"
+                    PointerPressed="OnDrawerScrimPressed" />
+
+            <Border Width="290" HorizontalAlignment="Left" IsVisible="{Binding IsDrawerOpen}"
+                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid RowDefinitions="Auto,*">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="14,12,12,6">
+                        <TextBlock Grid.Column="0" Text="MediaRack" FontSize="17" FontWeight="Bold"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Classes="draweraction" Content="＋ 添加源"
+                                Command="{Binding AddSourceCommand}"
+                                ToolTip.Tip="连一个新源；已经连着的不会被断开" />
+                    </Grid>
+
+                    <!-- 抽屉里的导航归 HomeViewModel；一个源都没连上时这里就是空的（只剩上面那行） -->
+                    <ContentControl Grid.Row="1" Content="{Binding Home}" Margin="0,0,0,0">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate DataType="vm:HomeViewModel">
+                                <views:SidePanel />
+                            </DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+                </Grid>
+            </Border>
+
+            <!-- ═══ 连接页（覆盖层）═══ -->
+            <Border Background="#AA000000" IsVisible="{Binding IsConnectOpen}">
+                <Border MaxWidth="780" MaxHeight="680" Margin="24"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+                        BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                        BorderThickness="1" CornerRadius="12" ClipToBounds="True">
+                    <Grid>
+                        <!-- 标题在 ConnectView 里，这里只把 ✕ 浮在右上角，别让"连接一个源"出现两遍 -->
+                        <ContentControl Content="{Binding Connect}" />
+                        <Button Classes="chrome" Content="✕" Margin="0,8,8,0"
+                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Command="{Binding CloseConnectCommand}"
+                                ToolTip.Tip="关掉，回到刚才的页面" />
+                    </Grid>
+                </Border>
+            </Border>
+
+        </Grid>
     </Grid>
 </Window>

@@ -332,6 +332,32 @@ public sealed partial class HomeViewModel : ViewModelBase, IDisposable
         _ = ReloadAsync();
     }
 
+    // ── 从「我的」页跳进来 ─────────────────────────────────────────
+    //
+    // 「我的」只负责入口，真正的列表还是首页这一份（收藏夹的增删改、合集网格的过滤框都在这里），
+    // 所以在那边点一下等于在这里点一下同名导航，不另起一套数据。
+
+    /// <summary>收藏的视频：切到第一个收藏夹（没有收藏夹就停在原地）。</summary>
+    public void OpenFavoritesView()
+    {
+        var target = FavoriteNavs.FirstOrDefault(n => n.IsFavorite);
+        if (target is not null) ApplyNav(target);
+    }
+
+    /// <summary>收藏的合集 / 合集网格：切到导航里的「合集」。</summary>
+    public void OpenCollectionsView()
+    {
+        var target = SourceNavs.FirstOrDefault(n => n.IsCollections);
+        if (target is not null) ApplyNav(target);
+    }
+
+    /// <summary>继续观看。</summary>
+    public void OpenRecentView()
+    {
+        var target = SourceNavs.FirstOrDefault(n => n.IsRecent);
+        if (target is not null) ApplyNav(target);
+    }
+
     public void BackToCollectionGrid()
     {
         if (_openCollection is null) return;

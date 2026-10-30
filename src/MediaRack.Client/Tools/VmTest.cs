@@ -63,15 +63,19 @@ public static class VmTest
 
         vm.SetColumns(3);
 
-        // 切源：H 是条目最多的源（8140）
-        var h = vm.SourceNavs.FirstOrDefault(n => n.Id == "H") ?? vm.SourceNavs[1];
-        vm.SelectedSourceNav = h;
+        // 切视图：继续观看（recent）。一条配置 = 一个源之后，侧栏不再逐个列源，
+        // 所以"切"的是视图而不是源；判据仍是"换了一份列表、条目数跟着变"。
+        var viewPick = vm.SourceNavs.First(n => n.IsRecent);
+        vm.SelectedSourceNav = viewPick;
         await WaitIdleAsync(vm);
-        var hTotal = vm.Total;
-        Say("切源", vm.SelectedFavoriteNav is null && hTotal > 0 && hTotal != total,
-            $"{h.Title} → total={hTotal}（聚合视图 {total}）");
+        var recentTotal = vm.Total;
+        Say("切视图", vm.SelectedFavoriteNav is null && recentTotal > 0 && recentTotal != total,
+            $"{viewPick.Title} → total={recentTotal}（聚合视图 {total}）");
 
-        // 合集下拉：应只剩这个源的合集，且过滤生效
+        // 合集下拉：回到「全部视频」，过滤条目最多的那个合集
+        vm.SelectedSourceNav = vm.SourceNavs.First(n => n.IsAll);
+        await WaitIdleAsync(vm);
+
         var biggest = vm.Collections.Where(c => c.Id is not null).OrderByDescending(c => c.ItemCount).FirstOrDefault();
         if (biggest is null)
         {
@@ -86,13 +90,13 @@ public static class VmTest
 
             vm.SelectedCollection = vm.Collections[0];
             await WaitIdleAsync(vm);
-            Say("退回全部合集", vm.Total == hTotal, $"total={vm.Total}");
+            Say("退回全部合集", vm.Total == total, $"total={vm.Total}");
         }
 
         // 搜索
         await vm.SearchNowAsync("1");
         var searched = vm.Total;
-        Say("搜索", searched > 0 && searched < hTotal, $"q=1 → total={searched}");
+        Say("搜索", searched > 0 && searched < total, $"q=1 → total={searched}");
 
         await vm.SearchNowAsync("");
         await WaitIdleAsync(vm);

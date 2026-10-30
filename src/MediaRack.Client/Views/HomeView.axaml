@@ -132,122 +132,11 @@
 
     <Grid>
 
-        <!-- ═══ 浏览层 ═══ -->
-        <Grid ColumnDefinitions="250,*">
-
-        <!-- ═══ 左：导航 ═══ -->
-        <Border Grid.Column="0"
-                BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
-                BorderThickness="0,0,1,0">
-            <ScrollViewer>
-                <StackPanel Spacing="0" Margin="0,4,0,16">
-
-                    <!-- 源：这台机器上连着的每一个源（可同时连多个），点一行换一页。
-                         与 APK 抽屉里的源列表同一个东西，只是横过来放在左栏。 -->
-                    <StackPanel IsVisible="{Binding HasSessions}" Spacing="0">
-                        <Grid ColumnDefinitions="*,Auto" Margin="0,0,10,0">
-                            <TextBlock Grid.Column="0" Text="源" Classes="navhead" />
-                            <Button Grid.Column="1" Content="＋ 添加" Classes="mini"
-                                    Padding="8,1" Margin="0,11,6,0" FontSize="11"
-                                    ToolTip.Tip="连接另一个源（不影响已经连着的）"
-                                    Command="{Binding AddSourceCommand}" />
-                        </Grid>
-
-                        <ItemsControl ItemsSource="{Binding Sessions}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="vm:SourceSession">
-                                    <!-- 整行可点切源，右侧两个小按钮（改 / 断开）——与 APK 抽屉里
-                                         长按源弹出的「编辑 / 删除」同一组动作，只是摊开成图标 -->
-                                    <Grid ColumnDefinitions="*,Auto" Margin="6,0,6,2">
-                                        <Button Grid.Column="0" Classes="session"
-                                                Classes.current="{Binding IsCurrent}"
-                                                Command="{Binding ActivateCommand}"
-                                                ToolTip.Tip="{Binding Subtitle}">
-                                            <StackPanel Spacing="1">
-                                                <TextBlock Text="{Binding Title}" FontSize="13"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding Subtitle}" FontSize="10.5" Opacity="0.5"
-                                                           TextTrimming="CharacterEllipsis" />
-                                            </StackPanel>
-                                        </Button>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal"
-                                                    VerticalAlignment="Center" Margin="2,0,0,0">
-                                            <Button Classes="navtool" Content="改"
-                                                    Command="{Binding EditCommand}"
-                                                    ToolTip.Tip="编辑这个源（地址 / 令牌 / 名称）" />
-                                            <Button Classes="navtool" Content="✕"
-                                                    Command="{Binding RemoveCommand}"
-                                                    ToolTip.Tip="断开并从列表移除（配置保留，连接页能重连）" />
-                                        </StackPanel>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-
-                    <TextBlock Text="浏览" Classes="navhead" />
-                    <ListBox x:Name="SourceList"
-                             ItemsSource="{Binding SourceNavs}"
-                             SelectedItem="{Binding SelectedSourceNav}"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             Padding="6,0">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="vm:NavItem">
-                                <StackPanel Spacing="1" Margin="2,1">
-                                    <TextBlock Text="{Binding Title}" />
-                                    <TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.55"
-                                               IsVisible="{Binding Subtitle, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-
-                    <!-- 收藏夹：标题行右侧的 ＋ 与内联新建 -->
-                    <Grid ColumnDefinitions="*,Auto" Margin="0,0,10,0">
-                        <TextBlock Grid.Column="0" Text="收藏夹" Classes="navhead" />
-                        <Button Grid.Column="1" Content="＋ 新建" Classes="mini"
-                                Padding="8,1" Margin="0,11,6,0" FontSize="11"
-                                ToolTip.Tip="新建收藏夹"
-                                Command="{Binding BeginCreateFavoriteCommand}" />
-                    </Grid>
-
-                    <StackPanel Spacing="6" Margin="12,2,12,6"
-                                IsVisible="{Binding IsCreatingFavorite}">
-                        <TextBox Text="{Binding NewFavoriteName}" FontSize="12"
-                                 PlaceholderText="收藏夹名字" />
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Button Content="创建" Classes="mini" Command="{Binding CommitCreateFavoriteCommand}" />
-                            <Button Content="取消" Classes="mini" Command="{Binding CancelCreateFavoriteCommand}" />
-                        </StackPanel>
-                    </StackPanel>
-
-                    <ListBox x:Name="FavoriteList"
-                             ItemsSource="{Binding FavoriteNavs}"
-                             SelectedItem="{Binding SelectedFavoriteNav}"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             Padding="6,0">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="vm:NavItem">
-                                <StackPanel Spacing="1" Margin="2,1">
-                                    <TextBlock Text="{Binding Title}" />
-                                    <TextBlock Text="{Binding Subtitle}" FontSize="11" Opacity="0.55"
-                                               IsVisible="{Binding Subtitle, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-
-                    <TextBlock Opacity="0.4" FontSize="11" Margin="14,18,12,0" TextWrapping="Wrap"
-                               Text="「合集」是源里的目录 / UP 主，只读；收藏夹属于你，这里只列当前源里收藏的东西。" />
-
-                </StackPanel>
-            </ScrollViewer>
-        </Border>
-
-        <!-- ═══ 右：标题 + 工具栏 + 内容 ═══ -->
-        <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*">
+        <!-- ═══ 标题 + 工具栏 + 内容 ═══
+             左栏（源 / 浏览 / 收藏夹）已经搬进壳的抽屉（SidePanel.axaml）：
+             手机上一进来就是海报墙，点 ☰ 才展开源列表，这里跟着对齐。
+        -->
+        <Grid RowDefinitions="Auto,Auto,Auto,*">
 
             <!-- 标题行：当前位置 + 收藏夹工具 + 计数 + 刷新 -->
             <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto"
@@ -585,7 +474,6 @@
 
             </Grid>
         </Grid>
-    </Grid>
 
         <!-- ═══ 播放层 ═══
              盖在海报墙上面而不是换页：返回时列表还在视觉树里，滚动位置原样保留

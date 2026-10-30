@@ -76,7 +76,20 @@ public static class ConnectionStore
             if (!File.Exists(FilePath)) return new List<ServerEntry>();
             var text = File.ReadAllText(FilePath);
             var shape = JsonSerializer.Deserialize<FileShape>(text, Json);
-            return shape?.Servers ?? new List<ServerEntry>();
+            var all = shape?.Servers ?? new List<ServerEntry>();
+
+            // 只有服务器地址、没有 /s/{slug} 的配置属于旧版（那时客户端还能连服务端根）。
+            // 根是管理页通道、一次列出全部源，客户端已经一律不认——所以这类条目
+            // 既连不上也没有"补一格就能救"以外的用法，直接丢掉并回写文件。
+            // 留着它只会在界面上多一行红字，等于把历史包袱摆给用户看。
+            var kept = all.Where(s => ApiClient.IsSourcePortalUrl(s.BaseUrl)).ToList();
+            if (kept.Count != all.Count)
+            {
+                Tools.ClientLog.Write($"丢弃 {all.Count - kept.Count} 条旧式配置（只有服务器地址、缺源地址）");
+                Save(kept);
+            }
+
+            return kept;
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {

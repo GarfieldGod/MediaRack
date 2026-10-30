@@ -26,13 +26,8 @@ public sealed class SavedSource : ViewModelBase
 
     public string Title => Entry.DisplayName;
 
-    /// <summary>这条配置有没有源地址。旧版只存了服务器地址，连不了也不该连。</summary>
-    public bool MissingSource => !ApiClient.IsSourcePortalUrl(Entry.BaseUrl);
-
-    /// <summary>第二行：<c>host:port/s/slug</c>；旧式配置直接说明缺什么；连着的话后面标一句。</summary>
-    public string Subtitle => MissingSource
-        ? $"{Entry.AddressLine} · 缺源地址，点「编辑」补上"
-        : Connected ? $"{Entry.AddressLine} · 已连接" : Entry.AddressLine;
+    /// <summary>第二行：<c>host:port/s/slug</c>，连着的话后面标一句。</summary>
+    public string Subtitle => Connected ? $"{Entry.AddressLine} · 已连接" : Entry.AddressLine;
 
     public bool Connected { get; }
 

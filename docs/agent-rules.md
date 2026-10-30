@@ -88,11 +88,20 @@ python scripts/check/check_hygiene.py --strict    # 警告也算失败
 | `--vmtest [baseUrl]` | 主页（切源 / 合集 / 搜索 / 续页 / 海报） |
 | `--playtest [baseUrl]` | 播放链路（起播 / 双流合成 / 进度写回） |
 | `--connecttest <源门户地址> [令牌]` | 连接页（源地址必填 / 只认门户地址 / 只能拿到一条源） |
+| `--shelltest` | 外壳骨架（空态 / 抽屉 / 连接弹层 / 我的往返），**不联网不开窗** |
+
+`--shelltest` 跑在 UI 线程上同步执行，所以不受"没有消息循环 → `Dispatcher.Post` 的活不执行"影响；
+反过来说，它只能断言**结构**（谁是谁、开没开），断言不了网络回来的数据——那部分归 `--vmtest`。
 
 模拟输入有三个反复踩的坑，全和被测代码无关：窗口最小化时 `GetWindowRect` 返回 -32000 哨兵值
 （坐标全在屏幕外）；非活动窗口的第一次点击只激活窗口、不传给控件；Alt 抖动抢前台会让 Avalonia
 把键盘焦点从 TextBox 移到窗口本身，于是分步调用（点一次、再敲一次）会丢字。
 真需要点界面时，**一条命令里做完「激活 → 点 → 清空 → 输入」**，别拆成多次调用。
+
+**看整屏截图的办法（2026-10-30）**：`Add-Type`（PrintWindow）与 `WScript.Shell`（AppActivate）
+都被安全策略拦掉，能用的只有 `ffmpeg -f gdigrab -i desktop`——它抓的是屏幕，所以窗口必须真的
+在最前面。窗口被挡住时抓出来是全黑（DWM 合成，`-i title=` 也一样）。要稳定复现，就临时在窗口
+`Opened` 里设 `Topmost + Position + 固定宽高`，截完把这段临时钩子删掉。
 
 `android-push-samples.sh` 之所以要 `run-as` 而不是 `adb push` 到 `Android/data`：
 新系统上 adb（shell uid）建的文件属主不对，应用自己 `File.listFiles()` 返回 null。

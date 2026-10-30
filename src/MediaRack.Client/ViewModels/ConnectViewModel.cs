@@ -34,9 +34,13 @@ public sealed class ConnectViewModel : ViewModelBase
     /// 非空 = 从主页左栏某个源的「改」进来的：四栏预填成它的值，连接成功后由外壳替换掉那个会话。
     /// 与"点已保存行上的编辑"共用同一套 <see cref="IsEditing"/> 状态。
     /// </param>
+    /// <param name="onCancel">
+    /// 关闭这个覆盖层（取消 / 右上角 ✕）。连接页现在是盖在海报墙上的弹层，
+    /// 所以必须有个"什么都不做、退回去"的出口——手机上就是返回手势。
+    /// </param>
     public ConnectViewModel(Action<ServerEntry, List<SourceInfoDto>, ApiClient, string?> onConnected,
         string? notice = null, bool isError = false, Func<string, bool>? isConnected = null,
-        ServerEntry? editing = null)
+        ServerEntry? editing = null, Action? onCancel = null)
     {
         _onConnected = onConnected;
         _isConnected = isConnected ?? (_ => false);
@@ -46,6 +50,7 @@ public sealed class ConnectViewModel : ViewModelBase
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => CanConnect);
         PasteCommand = new AsyncRelayCommand(ApplyPasteAsync, () => Paste.Trim().Length > 0);
         CancelEditCommand = new RelayCommand(ClearEdit, () => _editing is not null);
+        CloseCommand = new RelayCommand(() => onCancel?.Invoke(), () => onCancel is not null);
 
         ReloadSaved();
 
@@ -159,6 +164,9 @@ public sealed class ConnectViewModel : ViewModelBase
     public AsyncRelayCommand PasteCommand { get; }
     public RelayCommand CancelEditCommand { get; }
 
+    /// <summary>关掉覆盖层（右上角 ✕ / 取消）。没有外壳时（自检）就是个空命令。</summary>
+    public RelayCommand CloseCommand { get; }
+
     // ── 字段变更 ───────────────────────────────────────────────────
 
     /// <summary>
@@ -188,19 +196,6 @@ public sealed class ConnectViewModel : ViewModelBase
     private void UseSaved(SavedSource row)
     {
         FillFrom(row.Entry.BaseUrl, row.Entry.Token, row.Entry.Name);
-
-        // 旧版配置只存了服务器地址，没有源地址：直接连会退化成"一次列出全部源"，
-        // 所以停在这里，进编辑态让人补一格——补完覆盖原条目，不会多出一条。
-        if (Slug.Length == 0)
-        {
-            _editing = row.Entry;
-            OnPropertyChanged(nameof(IsEditing));
-            OnPropertyChanged(nameof(EditHint));
-            CancelEditCommand.RaiseCanExecuteChanged();
-            Fail($"「{row.Title}」是旧式配置，只记了服务器地址。请补上「源地址」再连接（不能一次连整台服务器）");
-            return;
-        }
-
         _editing = null;
         OnPropertyChanged(nameof(IsEditing));
         OnPropertyChanged(nameof(EditHint));
@@ -270,9 +265,9 @@ public sealed class ConnectViewModel : ViewModelBase
         FillFrom(picked, payload.Token, null);
         if (Slug.Length == 0)
         {
-            // 没有源地址的码是旧版服务端出的（那时只有服务端根）。这里不降级连根：
-            // 根的源列表是管理页通道，客户端不该走。
-            Fail("这个码里没有源地址（旧版服务端出的）。请到管理页重新生成该源的二维码，或手填源地址");
+            // 码里没有源地址就不是源门户的码（源门户的码一定带 /s/{slug}）。
+            // 不降级连根：根的源列表是管理页通道，客户端不该走。
+            Fail("这个码里没有源地址。请到管理页重新生成该源的二维码，或手填源地址");
             return;
         }
 
