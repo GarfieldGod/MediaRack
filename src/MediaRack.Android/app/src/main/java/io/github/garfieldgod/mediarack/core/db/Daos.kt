@@ -191,7 +191,7 @@ interface MarkDao {
     @Query("SELECT * FROM marks WHERE watched_at IS NOT NULL ORDER BY watched_at DESC")
     fun observeWatched(): Flow<List<MarkEntity>>
 
-    /** 全量快照：信息流推荐要按 scope+key 查"播过没有/多久前播的"，一次读全表比逐条查快。 */
+    /** 全量快照：信息流洗牌要按 scope+key 查"多久前播过"，一次读全表比逐条查快。 */
     @Query("SELECT * FROM marks")
     suspend fun allSnapshot(): List<MarkEntity>
 

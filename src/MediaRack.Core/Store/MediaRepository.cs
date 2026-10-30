@@ -433,8 +433,8 @@ public sealed class MediaRepository(LibraryDatabase db)
     public SummaryPage ListSummaries(SummaryQuery query)
     {
         var aggregate = query.SourceId is null;
-        // sort=recommend：加权随机推荐序列。打分要在"去重后的候选全集"上做，
-        // SQL 的 ORDER BY 帮不上忙（权重不在表里），所以走独立的内存打分路径。
+        // sort=recommend：随机序。排序键是 seed+key 的哈希，不在表里，
+        // SQL 的 ORDER BY 帮不上忙，所以走独立的内存排序路径。
         if (string.Equals(query.Sort, "recommend", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrEmpty(query.Seed))
         {
@@ -569,31 +569,30 @@ public sealed class MediaRepository(LibraryDatabase db)
         return new SummaryPage(total, rows, nextOffset);
     }
 
-    /// <summary>推荐打分用的候选行。<see cref="Cnt"/> 是跨源合并到 key 维度的播放次数。</summary>
-    private sealed record RecCandidate(string SourceId, string Key, int Cnt, long LastAt);
+    /// <summary>随机序列的候选行。<see cref="LastAt"/> 只用来判"播过没有"，不参与打分。</summary>
+    private sealed record RecCandidate(string SourceId, string Key, long LastAt);
 
     /// <summary>
-    /// 加权随机推荐序列（<c>sort=recommend</c>）。
+    /// 随机序列（<c>sort=recommend</c>）。
     /// <para>
-    /// 权重 = 1/(1+播放次数)，次数来自 <c>media_meta.play_count</c>（/meta 上报的跨设备
-    /// 播放计数）：未看权重 1.0、播 1 次 0.5、播 n 次 1/(1+n)——一条公式同时满足"未看优先"
-    /// 与"低播优先"，且是概率性的（高播也会偶现，不是绝迹）。
+    /// 两个池各自按 seed 洗牌，再按 <see cref="SeenShare"/> 的名额交错：
+    /// <b>每 10 条里约 1 条是播过的，其余 9 条从没播过</b>。
     /// </para>
     /// <para>
-    /// 打分用加权洗牌（Efraimidis–Spirakis）：score = U^(1/w) = U^(1+cnt)，U 是由
-    /// seed+key 哈希出的 (0,1) 均匀数。<b>确定性</b>：同一 seed 全序列固定，客户端翻页
-    /// offset 递增就是走这条序列，服务端不存任何会话状态；换 seed 即换一批。
-    /// 每 6 个槽位留 1 个"重温槽"，只从已看过的里面按同权重抽，高播内容有稳定的复出频率。
+    /// 名额按池分配而不是给"未看"加权。加权洗牌（score = U^(1/w)）的比例取决于两池的
+    /// 相对大小——未看 60 条、播过 240 条时，9:1 的单项权重只能得到约 69% 未看，不是 90%；
+    /// 想拿到与池子大小无关的固定比例，只能按池子发名额。
     /// </para>
     /// <para>
-    /// 排除：30 分钟内播过的（刚看完别再推）；排除后剩得太少就不排除（小库会被清空）。
+    /// 同一 seed 全序列固定（客户端翻页/重拉不抖），换 seed 即换一批；服务端不存会话状态。
+    /// 30 分钟内播过的不进候选；排除后剩得太少就不排除（小库会被清空一页）。
     /// </para>
     /// </summary>
     private SummaryPage ListSummariesRecommend(SummaryQuery query, bool aggregate)
     {
         var partition = aggregate ? "PARTITION BY m.key" : "PARTITION BY m.source_id, m.key";
         // 候选集与水合共用一份 CTE：过滤条件（含 missing/hidden/白名单）必须在 SQL 层生效，
-        // 与普通分页路径完全同源，否则推荐序列会混进不该出现的条目。
+        // 与普通分页路径完全同源，否则随机序列会混进不该出现的条目。
         var cte =
             $"""
              WITH filtered AS (
@@ -614,16 +613,15 @@ public sealed class MediaRepository(LibraryDatabase db)
              )
              """;
 
-        // 1) 播放次数 + 最近播放时间。来源是 media_meta（/meta 上报的跨设备计数，
-        //    MarkedPlayed 时 play_count+1），按 key 合并多源（次数求和、时间取最近）
-        var counts = new Dictionary<string, (int Cnt, long LastAt)>(StringComparer.Ordinal);
+        // 1) 最近播放时间。按 key 合并多源取最近一次——只用于冷却去重，不参与排序
+        var lastPlayed = new Dictionary<string, long>(StringComparer.Ordinal);
         using (var cmd = db.Connection.CreateCommand())
         {
             cmd.CommandText =
-                "SELECT key, COALESCE(SUM(play_count), 0), COALESCE(MAX(last_play_at), 0) FROM media_meta GROUP BY key;";
+                "SELECT key, COALESCE(MAX(last_play_at), 0) FROM media_meta GROUP BY key;";
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
-                counts[reader.GetString(0)] = ((int)(long)reader.GetInt64(1), reader.GetInt64(2));
+                lastPlayed[reader.GetString(0)] = reader.GetInt64(1);
         }
 
         // 2) 候选全集（跨源去重后），只取键——内存打分用
@@ -636,9 +634,7 @@ public sealed class MediaRepository(LibraryDatabase db)
             while (reader.Read())
             {
                 var key = reader.GetString(1);
-                var (cnt, lastAt) = counts.TryGetValue(key, out var t) ? t : (0, 0L);
-                candidates.Add(new RecCandidate(reader.GetString(0), key, cnt, lastAt));
-            }
+                candidates.Add(new RecCandidate(reader.GetString(0), key, lastPlayed.GetValueOrDefault(key)));            }
         }
 
         // 3) 排除刚播过的；排除后剩得太少就不排除（小库会被清空一页）
@@ -646,45 +642,20 @@ public sealed class MediaRepository(LibraryDatabase db)
         var kept = candidates.Where(c => c.LastAt <= cutoff).ToList();
         if (kept.Count >= MinRecommendPool) candidates = kept;
 
-        // 4) 加权洗牌：score = U^(1+cnt)，降序。未看(cnt=0)就是纯 U 排序 = 均匀随机；
-        //    播过的指数抬升使其自然沉底。重温池 = 主序列里的已看子集（同序即同权重序）。
-        var score = new Dictionary<(string, string), double>(candidates.Count);
-        foreach (var c in candidates)
-            score[(c.SourceId, c.Key)] = Math.Pow(Uniform01(query.Seed!, c.Key), 1 + c.Cnt);
-
-        var main = candidates
-            .OrderByDescending(c => score[(c.SourceId, c.Key)])
+        // 4) 两池各自洗牌，再按名额交错：播过的只占 SeenShare，其余全给没播过的
+        var unseen = candidates
+            .Where(c => c.LastAt == 0)
+            .OrderByDescending(c => Uniform01(query.Seed!, c.Key))
             .ThenBy(c => c.Key, StringComparer.Ordinal)
             .ToList();
-        var replay = main.Where(c => c.Cnt > 0).ToList();
+        var seen = candidates
+            .Where(c => c.LastAt != 0)
+            .OrderByDescending(c => Uniform01(query.Seed!, c.Key))
+            .ThenBy(c => c.Key, StringComparer.Ordinal)
+            .ToList();
+        var ordered = InterleaveByQuota(unseen, seen, query.Seed!);
 
-        // 5) 槽位合并：每 6 个槽 1 个重温槽（只从已看里抽）；主槽跳过已被重温槽用掉的
-        var used = new HashSet<(string, string)>();
-        var ordered = new List<RecCandidate>(main.Count);
-        int mi = 0, ri = 0;
-        while (ordered.Count < main.Count)
-        {
-            var took = false;
-            if (ordered.Count % RecommendReplayEvery == RecommendReplayEvery - 1)
-            {
-                while (ri < replay.Count && !used.Add((replay[ri].SourceId, replay[ri].Key))) ri++;
-                if (ri < replay.Count)
-                {
-                    ordered.Add(replay[ri]);
-                    ri++;
-                    took = true;
-                }
-            }
-            if (!took)
-            {
-                while (mi < main.Count && !used.Add((main[mi].SourceId, main[mi].Key))) mi++;
-                if (mi >= main.Count) break; // 防御：replay ⊆ main，理论上到不了
-                ordered.Add(main[mi]);
-                mi++;
-            }
-        }
-
-        // 6) 按推荐序切页，再按页内 key 集水合完整行（C# 端重排回推荐序）
+        // 5) 按随机序切页，再按页内 key 集水合完整行（C# 端重排回原序）
         var total = ordered.Count;
         var pageKeys = ordered.Skip(query.Offset).Take(query.Limit).ToList();
         var rows = new List<MediaSummaryRow>(pageKeys.Count);
@@ -760,10 +731,54 @@ public sealed class MediaRepository(LibraryDatabase db)
         return new SummaryPage(total, rows, nextOffset);
     }
 
-    /// <summary>推荐序列的常量：刚播过的冷却窗口 / 小库保护阈值 / 重温槽周期。</summary>
+    /// <summary>随机序列的常量：刚播过的冷却窗口 / 小库保护阈值 / 播过内容的名额占比。</summary>
     private const long RecentPlayMs = 30 * 60 * 1000;
     private const int MinRecommendPool = 10;
-    private const int RecommendReplayEvery = 6;
+
+    /// <summary>播过内容的配额：每 10 条里约 1 条。客户端 <c>FeedRecommender</c> 用同一个值。</summary>
+    private const double SeenShare = 0.1;
+
+    /// <summary>
+    /// 按名额把 <paramref name="seen"/> 均匀插进 <paramref name="unseen"/>，名额 = 总数 × <see cref="SeenShare"/>。
+    /// <para>
+    /// 位置用分层随机：把序列切成 k 段、每段内随机取一位，所以既均匀分散（不会前半页全是旧片），
+    /// 又不会形成"每第 10 条固定是旧片"的可预测节拍。
+    /// </para>
+    /// <para>
+    /// 任一侧耗尽时，剩余槽位全部给另一侧——池子小不会让序列变短。
+    /// </para>
+    /// </summary>
+    private static List<RecCandidate> InterleaveByQuota(
+        List<RecCandidate> unseen, List<RecCandidate> seen, string seed)
+    {
+        var total = unseen.Count + seen.Count;
+        if (total == 0) return [];
+        if (seen.Count == 0) return [.. unseen];
+        if (unseen.Count == 0) return [.. seen];
+
+        // 名额不超过看过池的实际大小，也不会让未看被挤掉（上限即两者较小者）
+        var quota = Math.Min(seen.Count, (int)Math.Round(total * SeenShare));
+
+        var slots = new HashSet<int>(quota);
+        for (var seg = 0; seg < quota; seg++)
+        {
+            // 第 seg 段的区间 [lo, hi)，两段不重叠，取位必然唯一
+            var lo = (int)((long)seg * total / quota);
+            var hi = (int)((long)(seg + 1) * total / quota);
+            slots.Add(lo + (int)(Uniform01(seed, "slot:" + seg) * (hi - lo)));
+        }
+
+        var result = new List<RecCandidate>(total);
+        int ui = 0, si = 0;
+        for (var i = 0; i < total; i++)
+        {
+            if (si < seen.Count && (slots.Contains(i) || ui >= unseen.Count))
+                result.Add(seen[si++]);
+            else
+                result.Add(unseen[ui++]);
+        }
+        return result;
+    }
 
     /// <summary>seed+key 的确定性均匀数 (0,1)。SHA256 前 8 字节取高 53 位，双精度下无精度损失。</summary>
     private static double Uniform01(string seed, string key)

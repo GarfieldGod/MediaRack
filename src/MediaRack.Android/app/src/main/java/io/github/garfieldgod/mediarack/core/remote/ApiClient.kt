@@ -277,7 +277,7 @@ class ApiClient(
         query: String? = null,
         collectionId: String? = null,
         favoriteId: String? = null,
-        /** 排序：null = 服务端默认（标题）；`added` = 按收藏夹加入时间倒序；`recommend` = 加权随机推荐。 */
+        /** 排序：null = 服务端默认（标题）；`added` = 按收藏夹加入时间倒序；`recommend` = 随机序（seed 决定，不带 seed 时退回默认序）；播过的最多占 1/10 名额。 */
         sort: String? = null,
         /** sort=recommend 的确定性种子：会话内复用同一 seed 翻页稳定，换 seed 即换一批。 */
         seed: String? = null,

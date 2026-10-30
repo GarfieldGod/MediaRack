@@ -766,7 +766,8 @@ components:
         - `recent`：**最后一次播放**的倒序，即「继续观看」。这个排序会**同时过滤**：
           只返回 `last_play_at` 非空且 `play_pos_ms > 0` 的条目
           （只判 `last_play_at` 会把"点开 1 秒就关"的也算进来，那属于点开过、不是看过）。
-        - `recommend`：加权随机（手机信息流），必须带 `seed`。
+        - `recommend`：随机序（手机信息流），必须带 `seed`；播过的最多占 1/10 名额（每 10 条约 1 条），
+        30 分钟内播过的不进候选。同一 `seed` 全序列固定。
       schema: { type: string, enum: [title, added, recent, recommend] }
     Range:
       name: Range

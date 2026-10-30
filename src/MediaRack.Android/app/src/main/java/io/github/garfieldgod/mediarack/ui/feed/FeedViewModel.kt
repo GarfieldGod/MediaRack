@@ -315,8 +315,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             _loading.value = true
             try {
-                // 重建信息流 = 换一批推荐：种子在这里轮换；marks 快照同步刷新，
-                // 推荐的"未看/最久没播"判定才跟得上最新的观看记录
+                // 重建信息流 = 换一批随机序：种子在这里轮换；marks 快照同步刷新，
+                // 冷却的"多久前播过"判定才跟得上最新的观看记录
                 feedSeed = kotlin.random.Random.nextLong()
                 refreshMarkSnapshot()
                 restoreLastFilterOnce()
@@ -417,8 +417,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
             async {
                 val api = ApiClient(server.baseUrl, server.token)
                 try {
-                    // sort=recommend：服务端按"未看优先 + 低播优先 + 重温槽"出确定性序列，
-                    // 前 120 条就是全库加权洗牌的头部；同一 seed 翻页/重拉都不抖
+                    // sort=recommend：服务端按 seed 出随机序，前 120 条就是全库洗牌的头部；
+                    // 同一 seed 翻页/重拉都不抖，只有"30 分钟内播过的"会被剔掉
                     val page = withContext(Dispatchers.IO) {
                         api.library(limit = 120, sort = "recommend", seed = feedSeed.toString())
                     }
@@ -452,13 +452,13 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 信息流推荐种子：每次 [buildFeed] 换一个（重进 = 换一批推荐）；
+     * 信息流随机种子：每次 [buildFeed] 换一个（重进 = 换一批）；
      * 切过滤/切源只从 allCache 重投影、不换种子——同一会话里来回切，序列不抖。
-     * 合集/收藏夹的固定队列（PlayQueue 替换、FeedFilter.Liked）不经过推荐。
+     * 合集/收藏夹的固定队列（PlayQueue 替换、FeedFilter.Liked）不经过洗牌。
      */
     private var feedSeed: Long = kotlin.random.Random.nextLong()
 
-    /** marks 全量快照缓存：applyFilter 推荐分支按条目查"播过没有/多久前播的"。 */
+    /** marks 全量快照缓存：applyFilter 的本地分支按条目查"多久前播过"（冷却用）。 */
     private var markSnapshot: Map<String, MarkEntity> = emptyMap()
 
     private suspend fun refreshMarkSnapshot() {
@@ -467,29 +467,29 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun applyFilter(list: List<FeedItem>, f: FeedFilter): List<FeedItem> = when (f) {
         FeedFilter.All -> recommendMix(list)
-        FeedFilter.Local -> FeedRecommender.recommendLocal(
+        FeedFilter.Local -> FeedRecommender.shuffleLocal(
             list.filter { !it.isRemote }, feedSeed, ::localPlayedAt,
         )
         // 单服务器视图：远程拉取时服务端已按 recommend 排好序，这里只过滤
         is FeedFilter.Server -> list.filter { it.serverId == f.serverId }
         FeedFilter.Liked -> {
             val liked = markDao.likedSnapshot().map { "${it.scope}|${it.key}" }.toSet()
-            // 固定队列不许被推荐序污染：远程是按 recommend 拉回来的，这里按标题
+            // 固定队列不许被随机序污染：远程是按 recommend 拉回来的，这里按标题
             // 恢复与服务端默认序一致的确定性顺序
             list.filter { liked.contains(it.id) }
                 .sortedWith(compareBy({ it.title ?: "" }, { it.key }))
         }
     }
 
-    /** 「全部」视图：本地条目按占比穿插进服务端推荐序列（本地占比高时整体退化为本地推荐）。 */
+    /** 「全部」视图：本地条目按占比穿插进服务端随机序列（本地占比高时整体退化为本地洗牌）。 */
     private fun recommendMix(list: List<FeedItem>): List<FeedItem> {
         val local = list.filter { !it.isRemote }
         val remote = list.filter { it.isRemote }
         if (local.isEmpty()) return remote
         if (remote.isEmpty()) {
-            return FeedRecommender.recommendLocal(local, feedSeed, ::localPlayedAt)
+            return FeedRecommender.shuffleLocal(local, feedSeed, ::localPlayedAt)
         }
-        val localOrdered = FeedRecommender.recommendLocal(local, feedSeed, ::localPlayedAt)
+        val localOrdered = FeedRecommender.shuffleLocal(local, feedSeed, ::localPlayedAt)
         return FeedRecommender.mix(remote, localOrdered, feedSeed)
     }
 
