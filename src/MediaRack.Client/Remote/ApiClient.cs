@@ -399,6 +399,41 @@ public sealed class ApiClient : IDisposable
         var path = s.StartsWith('/') ? s.TrimEnd('/') : "/s/" + s;
         return NormalizeBaseUrl($"{h}:{p}{path}");
     }
+
+    /// <summary>
+    /// 拆 base URL → (host, port, 源地址路径，带前导 <c>/</c>)。
+    /// 没有路径前缀（直接连服务端根、老版本配置）时源地址为空串，调用方据此要求补填。
+    /// </summary>
+    public static (string Host, string Port, string SourcePath) SplitSourceBaseUrl(string? baseUrl)
+    {
+        var s = NormalizeBaseUrl(baseUrl);
+        if (s is null) return ("", "", "");
+
+        var noScheme = s[(s.IndexOf("://", StringComparison.Ordinal) + 3)..];
+        var slash = noScheme.IndexOf('/');
+        var hostPart = slash < 0 ? noScheme : noScheme[..slash];
+        var path = slash < 0 ? "" : noScheme[slash..];
+
+        var colon = hostPart.IndexOf(':');
+        return colon < 0
+            ? (hostPart, "", path)
+            : (hostPart[..colon], hostPart[(colon + 1)..], path);
+    }
+
+    /// <summary>
+    /// 是不是源门户地址（<c>http://主机:端口/s/{源标识}</c>）。
+    /// <para>
+    /// <b>客户端只认这一种形态。</b>服务端根路径虽然在本机可达，但那是管理页通道，
+    /// <c>/api/v1/sources</c> 会把这台机器上的全部源一次列出来——而"一条配置 = 一个源"
+    /// 是两端的共同前提，所以任何没有源地址的地址在这里就判为不可用，不做降级。
+    /// </para>
+    /// </summary>
+    public static bool IsSourcePortalUrl(string? baseUrl)
+    {
+        var (_, _, path) = SplitSourceBaseUrl(baseUrl);
+        var rest = path.Trim('/');
+        return rest.StartsWith("s/", StringComparison.Ordinal) && rest.Length > 2;
+    }
 }
 
 /// <summary>

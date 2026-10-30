@@ -12,11 +12,15 @@
              由 MainWindow.SetPlayerFullscreen 控制。 -->
         <Border Grid.Row="0" x:Name="Chrome" Padding="16,10"
                 Background="{DynamicResource SystemControlBackgroundBaseLowBrush}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
                 <TextBlock Text="MediaRack" FontSize="16" FontWeight="Bold" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" Text="{Binding ServerLabel}"
                            VerticalAlignment="Center" Margin="16,0" Opacity="0.75" />
-                <Button Grid.Column="2" Content="断开"
+                <Button Grid.Column="2" Content="＋ 添加源"
+                        Command="{Binding AddSourceCommand}"
+                        ToolTip.Tip="再连一个源；已经连着的不会被断开"
+                        IsVisible="{Binding IsConnected}" />
+                <Button Grid.Column="3" Content="断开当前"
                         Command="{Binding DisconnectCommand}"
                         IsVisible="{Binding IsConnected}" />
             </Grid>

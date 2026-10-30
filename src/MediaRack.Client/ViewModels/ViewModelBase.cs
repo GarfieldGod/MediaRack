@@ -32,11 +32,11 @@ public sealed class RelayCommand : ICommand
         _canExecute = canExecute;
     }
 
-    public event EventHandler? CanExecuteChanged
-    {
-        add { }
-        remove { }
-    }
+    /// <summary>
+    /// 必须是**真事件**：挂了 canExecute 的命令如果不通知，按钮会永远停在初始判定上
+    /// （连接按钮"点不动"就是这么来的）。带条件的命令改完状态后调用 <see cref="RaiseCanExecuteChanged"/>。
+    /// </summary>
+    public event EventHandler? CanExecuteChanged;
 
     public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
 
@@ -44,6 +44,8 @@ public sealed class RelayCommand : ICommand
     {
         if (CanExecute(parameter)) _execute();
     }
+
+    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }
 
 /// <summary>带参数的同步命令（列表项上的"连接 / 删除"这类）。</summary>
@@ -110,8 +112,9 @@ public sealed class AsyncRelayCommand : ICommand
         }
         catch (Exception e)
         {
-            // 命令里的异常不能冒泡到 async void（会直接崩进程）；留给上层 VM 自己上屏
-            System.Diagnostics.Trace.WriteLine($"[MediaRack.Client] 命令异常：{e}");
+            // 命令里的异常不能冒泡到 async void（会直接崩进程），但也不能只写 Trace：
+            // GUI 没有控制台，静默吞掉的表现是"按钮按下去什么都不发生"，只能靠翻日志。
+            Tools.ClientLog.Write($"[命令异常] {e}");
         }
         finally
         {

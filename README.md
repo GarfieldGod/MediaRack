@@ -159,13 +159,17 @@ scripts/devtools/android-push-samples.sh                 # --dry-run 可先看�
 
 ## PC 客户端
 
-独立于服务端的桌面播放器：一条 base URL + 一个令牌 = 一台服务端。本质是「横屏版、没有推荐流的 APK」，
-热点键鼠化的手势改为一整套快捷键。
+独立于服务端的桌面播放器，**配置模型与 APK 完全一致**：一条配置 = 一个源，四栏就是服务端管理页
+「访问方式」里那张表（服务器地址 / 端口 / 源地址 / 令牌 + 名称）。**源地址必填**——没有它就只有服务端根，
+而根是管理页通道，客户端不认（一次列出全部源等于把源级隔离作废）。配对二维码的内容可以直接粘进来
+一次回填——桌面没有摄像头，扫码换成粘贴。可以同时连着多个源，左栏逐个列出、点一下切换，换源不必
+断开重连。热点键鼠化的手势改为一整套快捷键。
 
 ```bash
 dotnet run --project src/MediaRack.Client
-dotnet bin/Debug/net10.0/MediaRack.Client.dll --selftest [baseUrl]   # 协议层自检
-dotnet bin/Debug/net10.0/MediaRack.Client.dll --playtest [baseUrl]   # 播放链路自检
+dotnet bin/Debug/net10.0/MediaRack.Client.dll --selftest [baseUrl]              # 协议层自检
+dotnet bin/Debug/net10.0/MediaRack.Client.dll --playtest [baseUrl]              # 播放链路自检
+dotnet bin/Debug/net10.0/MediaRack.Client.dll --connecttest <源门户地址> [令牌]  # 连接页自检
 ```
 
 连接配置在 `%LOCALAPPDATA%\MediaRack\client-servers.json`，日志在 `logs/client.log`。

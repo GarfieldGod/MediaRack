@@ -29,8 +29,9 @@ public sealed class FavoriteRepository(LibraryDatabase db)
     /// 漏掉它时门户会显示整台机器的收藏数——用户看到"这个源有 3 条"，
     /// 点进去只有 1 条。
     /// </para>
-    /// 收藏夹本身是跨源的，但用户选中某个源时，侧栏该显示"这个源里我收藏了多少"——
-    /// 否则点进夹子看到的条数与侧栏写的对不上（与合集的源级过滤同一套口径）。
+    /// <b>列表本身也跟着源走</b>：给定源（或可见源白名单）时，只返回"在这个源下有条目"
+    /// 或"还一条都没装（因此不属于任何源）"的夹子。之前只过滤计数不过滤行，
+    /// 门户里会列出整台机器的夹子——点进去全是空的，用户看到的就是"收藏夹没有按源拆开"。
     /// </summary>
     public IReadOnlyList<FavoriteRow> List(string? sourceId = null, IReadOnlyCollection<string>? visibleSourceIds = null)
     {
@@ -42,11 +43,13 @@ public sealed class FavoriteRepository(LibraryDatabase db)
 
         // 可见源集合按需展开成 IN 列表：空集合 = 一个源都看不见，直接 AND 0。
         var scopeCond = "";
+        var scopeWhere = "";
         if (allowed is not null)
         {
             if (allowed.Count == 0)
             {
                 scopeCond = " AND 0";
+                scopeWhere = " WHERE 0";
             }
             else
             {
@@ -58,7 +61,21 @@ public sealed class FavoriteRepository(LibraryDatabase db)
                     names.Add(p);
                     cmd.Parameters.AddWithValue(p, s);
                 }
-                scopeCond = $" AND i.source_id IN ({string.Join(", ", names)})";
+
+                var inList = string.Join(", ", names);
+                scopeCond = $" AND i.source_id IN ({inList})";
+
+                // 行过滤：本源有可见条目 → 出现；一条都没装 → 也出现（新夹子还没有归属，
+                // 藏起来会让"新建后立刻消失"，比多列一行更糟）。
+                scopeWhere =
+                    $"""
+                     WHERE EXISTS (SELECT 1 FROM favorite_item w
+                                     JOIN media wm ON wm.source_id = w.source_id AND wm.key = w.key
+                                    WHERE w.favorite_id = f.id AND w.source_id IN ({inList}))
+                        OR NOT EXISTS (SELECT 1 FROM favorite_item e
+                                         JOIN media em ON em.source_id = e.source_id AND em.key = e.key
+                                        WHERE e.favorite_id = f.id)
+                    """;
             }
         }
 
@@ -73,6 +90,7 @@ public sealed class FavoriteRepository(LibraryDatabase db)
                      WHERE i.favorite_id = f.id{scopeCond}),
                    (SELECT COUNT(*) FROM favorite_collection c WHERE c.favorite_id = f.id)
             FROM favorite f
+            {scopeWhere}
             ORDER BY f.sort_order, f.name COLLATE NOCASE;
             """;
         using var reader = cmd.ExecuteReader();

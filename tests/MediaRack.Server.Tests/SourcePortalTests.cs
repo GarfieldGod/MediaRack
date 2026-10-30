@@ -105,9 +105,64 @@ public sealed class SourcePortalTests : IClassFixture<MediaRackFactory>
         Assert.Equal(MediaRackFactory.DualB, sources[0].GetProperty("id").GetString());
     }
 
+    // ── 收藏夹跟着源走 ───────────────────────────────────────
+
+    /// <summary>
+    /// 门户里的收藏夹列表必须**按源拆开**：只列"本源有内容"和"还空着"的夹子。
+    /// <para>
+    /// 之前只按源过滤计数、不过滤行，门户会列出整台机器的夹子——点进去一条都没有，
+    /// 用户看到的就是"收藏夹没有按源拆开，显示了所有的"。
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task Portal_without_trailing_slash_redirects()
+    public async Task Portal_favorite_list_is_scoped_to_that_source()
     {
+        var (slugA, tokenA) = IdentityOf(MediaRackFactory.DualA);
+        var (slugB, tokenB) = IdentityOf(MediaRackFactory.DualB);
+
+        var a = _factory.CreateClient();
+        a.DefaultRequestHeaders.Authorization = new("Bearer", tokenA);
+        var b = _factory.CreateClient();
+        b.DefaultRequestHeaders.Authorization = new("Bearer", tokenB);
+
+        // 门户下建夹子：一条都没装 = 没有归属，两个门户都该看到（否则"新建完就消失"）
+        var created = await a.PostAsJsonAsync($"/s/{slugA}/api/v1/favorites",
+            new { name = "源级收藏夹-" + Guid.NewGuid().ToString("N")[..6] });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var id = JsonDocument.Parse(await created.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString()!;
+
+        Assert.Equal(0, await FavoriteCountInAsync(a, slugA, id));
+        Assert.Equal(0, await FavoriteCountInAsync(b, slugB, id));
+
+        // 装一条 a 的条目 → 只出现在 a 门户
+        await a.PostAsJsonAsync($"/s/{slugA}/api/v1/favorites/{id}/items",
+            new { add = new[] { new { source = MediaRackFactory.DualA, key = MediaRackFactory.KeyOnlyA } } });
+        Assert.Equal(1, await FavoriteCountInAsync(a, slugA, id));
+        Assert.Null(await FavoriteCountInAsync(b, slugB, id));
+
+        // 再装一条 b 也有的条目 → b 门户能看到，且只数 b 自己那一条
+        await b.PostAsJsonAsync($"/s/{slugB}/api/v1/favorites/{id}/items",
+            new { add = new[] { new { source = MediaRackFactory.DualB, key = MediaRackFactory.KeyShared } } });
+        Assert.Equal(1, await FavoriteCountInAsync(b, slugB, id));
+
+        await a.DeleteAsync($"/s/{slugA}/api/v1/favorites/{id}");
+    }
+
+    /// <summary>这个门户的收藏夹列表里有没有它；有则返回条目数，没有返回 null。</summary>
+    private static async Task<int?> FavoriteCountInAsync(HttpClient client, string slug, string id)
+    {
+        var body = await client.GetFromJsonAsync<JsonElement>($"/s/{slug}/api/v1/favorites");
+        foreach (var f in body.EnumerateArray())
+        {
+            if (f.GetProperty("id").GetString() == id) return f.GetProperty("itemCount").GetInt32();
+        }
+
+        return null;
+    }
+
+    [Fact]
+    public async Task Portal_without_trailing_slash_redirects()    {
         var (slug, _) = IdentityOf(MediaRackFactory.DualA);
         // 关掉自动跟随，否则 301 会被 HttpClient 静默追到带斜杠的页面。
         var client = _factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions

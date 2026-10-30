@@ -27,6 +27,7 @@ public sealed partial class HomeViewModel : ViewModelBase, IDisposable
     private const int PageSize = 60;
 
     private readonly ApiClient _api;
+    private readonly ISessionHost? _host;
     private readonly List<MediaCard> _cards = new();
     private DispatcherTimer? _searchDebounce;
 
@@ -53,11 +54,14 @@ public sealed partial class HomeViewModel : ViewModelBase, IDisposable
     private DateTime _lastLoadStarted;
     private bool _disposed;
 
-    public HomeViewModel(ServerEntry server, List<SourceInfoDto> sources, string? serverVersion, ApiClient api)
+    public HomeViewModel(ServerEntry server, List<SourceInfoDto> sources, string? serverVersion, ApiClient api,
+        ISessionHost? host = null, SourceSession? session = null)
     {
         _api = api;
+        _host = host;
         Server = server;
-        ServerLabel = server.DisplayName + (serverVersion is { Length: > 0 } v ? $" · v{v}" : "");
+        Session = session;
+        ServerLabel = session?.Label ?? server.DisplayName + (serverVersion is { Length: > 0 } v ? $" · v{v}" : "");
 
         SourceNavs = new ObservableCollection<NavItem>
         {
@@ -65,11 +69,8 @@ public sealed partial class HomeViewModel : ViewModelBase, IDisposable
             new("recent", null, "继续观看", "按上次播放排序"),
             new("collections", null, "合集", "按 UP 主 / 目录"),
         };
-        foreach (var s in sources)
-        {
-            SourceNavs.Add(new NavItem("source", s.Id,
-                string.IsNullOrWhiteSpace(s.Name) ? s.Id : s.Name, $"{s.ItemCount:N0} 条"));
-        }
+        // 一条配置 = 一个源（门户地址），所以这里恒为一条：「全部视频」就是它，
+        // 再单独列一行等于把同一份列表画两遍。
 
         FavoriteNavs = new ObservableCollection<NavItem>();
         Collections = new ObservableCollection<CollectionOption> { new(null, "全部合集", 0) };
@@ -79,6 +80,8 @@ public sealed partial class HomeViewModel : ViewModelBase, IDisposable
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         CloseDetailCommand = new RelayCommand<MediaCard>(_ => SelectedCard = null);
         PlayCommand = new RelayCommand<MediaCard>(StartPlay);
+        SwitchSessionCommand = new RelayCommand<SourceSession>(s => _host?.Activate(s));
+        AddSourceCommand = new RelayCommand(() => _host?.RequestAddSource());
 
         InitCollections();
         InitFavorites();
@@ -92,6 +95,19 @@ public sealed partial class HomeViewModel : ViewModelBase, IDisposable
 
     public ServerEntry Server { get; }
     public string ServerLabel { get; }
+
+    /// <summary>这一页属于哪个源（会话池里的那一条）。</summary>
+    public SourceSession? Session { get; }
+
+    /// <summary>左栏「源」那段：这台机器上所有连着的源，点一行换一页。</summary>
+    public ObservableCollection<SourceSession> Sessions => _host?.Sessions ?? _emptySessions;
+
+    private static readonly ObservableCollection<SourceSession> _emptySessions = new();
+
+    public bool HasSessions => _host is not null;
+
+    public RelayCommand<SourceSession> SwitchSessionCommand { get; }
+    public RelayCommand AddSourceCommand { get; }
 
     public ObservableCollection<NavItem> SourceNavs { get; }
     public ObservableCollection<NavItem> FavoriteNavs { get; }

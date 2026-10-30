@@ -29,7 +29,7 @@ class Program
 
         // 自检分支都往控制台打中文结论：不显式设 UTF-8 的话，
         // 一旦输出被管道接走就会按系统 ANSI 编码（GBK）编码，终端里全是乱码
-        if (args.Any(a => a is "--selftest" or "--vmtest" or "--playtest"))
+        if (args.Any(a => a is "--selftest" or "--vmtest" or "--playtest" or "--connecttest"))
         {
             try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* 个别终端不支持 */ }
         }
@@ -53,6 +53,16 @@ class Program
             var url = args.SkipWhile(a => a != "--selftest").Skip(1).FirstOrDefault();
             return Task.Run(() => MediaRack.Client.Tools.SelfTest.RunAsync(
                 string.IsNullOrWhiteSpace(url) ? "http://127.0.0.1:8080" : url!)).GetAwaiter().GetResult();
+        }
+
+        // 连接页无头验收（源地址必填 / 只接受门户地址 / 只能拿到一条源）
+        //   MediaRack.Client --connecttest http://host:port/s/{slug} [token]
+        if (args.Contains("--connecttest"))
+        {
+            var rest = args.SkipWhile(a => a != "--connecttest").Skip(1).Where(a => !a.StartsWith("--")).ToList();
+            if (rest.Count == 0) return 1;
+            return Task.Run(() => MediaRack.Client.Tools.ConnectTest.RunAsync(
+                rest[0], rest.Count > 1 ? rest[1] : null)).GetAwaiter().GetResult();
         }
 
         // 主页 ViewModel 无头验收（切源 / 合集 / 搜索 / 续页 / 海报解码）

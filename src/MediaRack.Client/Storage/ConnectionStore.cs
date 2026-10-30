@@ -1,13 +1,21 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MediaRack.Client.Remote;
 
 namespace MediaRack.Client.Storage;
 
-/// <summary>一条已保存的服务端连接。与 Android 端 <c>core/db/ServerEntity</c> 同一概念。</summary>
+/// <summary>
+/// 一条已保存的连接配置 = <b>一个源</b>（源门户 <c>http://host:port/s/{slug}</c>）。
+/// 与 Android 端 <c>core/db/ServerEntity</c> 一一对应：地址、端口、源地址、令牌四栏
+/// 就是服务端管理页「访问方式」里的四个字段。
+///
+/// 落盘仍然只有 base URL 一条（四栏是它的展开式），拆解见 <see cref="ApiClient.SplitSourceBaseUrl"/>——
+/// 存储格式不因界面从两栏变四栏而变化，老配置照样能读。
+/// </summary>
 public sealed class ServerEntry
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
-    /// <summary>展示名：连上后用服务端版本/源名回填，手输时就是地址本身。</summary>
+    /// <summary>展示名：留空时连上后用服务端里的源名回填。</summary>
     public string Name { get; set; } = "";
     /// <summary>base URL（可含路径前缀，门户形态是 <c>http://host:port/s/{slug}</c>）。</summary>
     public string BaseUrl { get; set; } = "";
@@ -16,6 +24,22 @@ public sealed class ServerEntry
 
     [JsonIgnore]
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? BaseUrl : Name;
+
+    /// <summary>四栏的展开式（编辑时回填表单用）。</summary>
+    [JsonIgnore]
+    public (string Host, string Port, string SourcePath) Fields => ApiClient.SplitSourceBaseUrl(BaseUrl);
+
+    /// <summary><c>host:port/s/slug</c>：列表里的第二行，不含 scheme。</summary>
+    [JsonIgnore]
+    public string AddressLine
+    {
+        get
+        {
+            var (host, port, path) = Fields;
+            if (host.Length == 0) return BaseUrl;
+            return port.Length == 0 ? $"{host}{path}" : $"{host}:{port}{path}";
+        }
+    }
 }
 
 /// <summary>
@@ -75,16 +99,31 @@ public static class ConnectionStore
         }
     }
 
-    /// <summary>新增或按 BaseUrl 更新，返回落库后的条目。</summary>
-    public static ServerEntry Upsert(string baseUrl, string? token, string? name = null)
+    /// <summary>
+    /// 新增或更新，返回落库后的条目。
+    ///
+    /// 定点更新用 <paramref name="replaceId"/>（编辑一条已保存配置、可能连地址一起改）：
+    /// 命中就改它，不命中再按 base URL 认领；同一 base URL 的其它重复行顺手清掉，
+    /// 免得列表里出现两行一模一样的源。
+    /// </summary>
+    public static ServerEntry Upsert(string baseUrl, string? token, string? name = null, string? replaceId = null)
     {
         var all = Load();
-        var hit = all.FirstOrDefault(s => string.Equals(s.BaseUrl, baseUrl, StringComparison.OrdinalIgnoreCase));
+        var hit = replaceId is { Length: > 0 } ? all.FirstOrDefault(s => s.Id == replaceId) : null;
+        hit ??= all.FirstOrDefault(s => string.Equals(s.BaseUrl, baseUrl, StringComparison.OrdinalIgnoreCase));
+
         if (hit is null)
         {
             hit = new ServerEntry { BaseUrl = baseUrl };
             all.Add(hit);
         }
+        else
+        {
+            hit.BaseUrl = baseUrl;
+            all.RemoveAll(s => !ReferenceEquals(s, hit) &&
+                               string.Equals(s.BaseUrl, baseUrl, StringComparison.OrdinalIgnoreCase));
+        }
+
         hit.Token = string.IsNullOrWhiteSpace(token) ? null : token;
         if (!string.IsNullOrWhiteSpace(name)) hit.Name = name!;
         hit.LastUsedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
