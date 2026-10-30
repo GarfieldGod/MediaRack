@@ -87,8 +87,30 @@ jobs:
           # compileSdk 35 缺失时 AGP 会自己下（licenses 已在镜像里接受过），先看一眼省一趟弯路。
           ls "$sdk/platforms" || true
 
+      # 输出落一份到 $RUNNER_TEMP/test.log：job 日志要 token 才能下载，而 check-run 注解
+      # 是公开可读的 —— 失败时下一步把关键几行贴进注解，命令行里也能直接看到为什么挂。
       - name: 跑测试
-        run: dotnet test MediaRack.sln -c Release --nologo --logger "console;verbosity=minimal"
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet test MediaRack.sln -c Release --nologo --logger "console;verbosity=minimal" 2>&1 \
+            | tee "$RUNNER_TEMP/test.log"
+
+      - name: 把失败原因贴进注解
+        if: failure()
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/test.log"
+          [ -f "$log" ] || { echo "没有 test.log，失败发生在跑测试之前"; exit 0; }
+          # 注解里换行要写成 %0A、% 要写成 %25，否则 GitHub 会把后半段吞掉。
+          body=$(tail -n 120 "$log" \
+            | tr -d '\r' \
+            | sed -e 's/%/%25/g' \
+            | awk '{ print $0 "%0A" }' \
+            | tr -d '\n')
+          echo "::error title=dotnet test 失败::$(printf '%s' "$body" | tail -c 6000)"
+          { echo '### dotnet test 失败：最后 120 行'; echo '```'; tail -n 120 "$log"; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
 
       # build.sh 就是本地那一套，一行没改：不为了 CI 另写一份 dotnet publish 参数，
       # 否则"本地发得出来、CI 发不出来"这种分叉迟早出现。
