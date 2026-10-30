@@ -33,9 +33,6 @@ public sealed class FfTools
         ResolveTool(Environment.GetEnvironmentVariable(FfmpegEnvVar), "ffmpeg"),
         ResolveTool(Environment.GetEnvironmentVariable(FfprobeEnvVar), "ffprobe"));
 
-    /// <summary>显式指定两个可执行文件（测试用）。</summary>
-    public static FfTools Explicit(string ffmpeg, string ffprobe) => new(ffmpeg, ffprobe);
-
     /// <summary>探测可用性。返回版本首行，失败时给出可执行的修复提示。</summary>
     public FfAvailability Check()
     {

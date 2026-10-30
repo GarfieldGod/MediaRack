@@ -24,18 +24,6 @@ public sealed class CollectionRepository(LibraryDatabase db)
     public CollectionRow? Get(string id) =>
         Query("WHERE c.id = $sid", id).FirstOrDefault();
 
-    /// <summary>某个源下的全部合集 id（可见性判断用，避免逐条查）。</summary>
-    public IReadOnlyList<string> IdsOf(string sourceId)
-    {
-        var list = new List<string>();
-        using var cmd = db.Connection.CreateCommand();
-        cmd.CommandText = "SELECT id FROM collection WHERE source_id = $sid;";
-        cmd.Parameters.AddWithValue("$sid", sourceId);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read()) list.Add(reader.GetString(0));
-        return list;
-    }
-
     /// <summary>合集下的条目键（按 key 排序），供 CLI 与测试使用。</summary>
     public IReadOnlyList<string> ListItemKeys(string collectionId)
     {

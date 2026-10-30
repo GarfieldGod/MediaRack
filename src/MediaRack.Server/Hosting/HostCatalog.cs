@@ -78,11 +78,4 @@ public static class HostCatalog
 
         return Kind.Other;
     }
-
-    public static string KindName(Kind kind) => kind switch
-    {
-        Kind.Virtual => "虚拟局域网",
-        Kind.Lan => "内网",
-        _ => "其他",
-    };
 }

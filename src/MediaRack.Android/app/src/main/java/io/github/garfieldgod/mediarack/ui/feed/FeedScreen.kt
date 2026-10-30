@@ -1849,18 +1849,6 @@ private fun playbackErrorText(e: PlaybackException): String {
 }
 
 @Composable
-private fun FeedTag(text: String) {
-    Text(
-        text,
-        color = Color.White,
-        fontSize = 10.5.sp,
-        modifier = Modifier
-            .background(Color.White.copy(alpha = 0.16f), RoundedCornerShape(999.dp))
-            .padding(horizontal = 9.dp, vertical = 3.dp),
-    )
-}
-
-@Composable
 private fun RailButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(

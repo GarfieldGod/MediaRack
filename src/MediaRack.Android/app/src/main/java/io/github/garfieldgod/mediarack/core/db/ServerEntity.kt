@@ -6,7 +6,11 @@ import androidx.room.PrimaryKey
 
 /**
  * 远程服务器（网络源）。一个服务器 = 一个 base URL + 可选令牌。
- * 库内容不落地——只缓存最近一次 summary 的 JSON（断网降级：条目变灰不消失）。
+ * 库内容不落地。
+ *
+ * 断网降级（缓存快照 + 条目变灰）**已决定不做**：收藏夹跟着源走，源连不上就没有可浏览的内容。
+ * 两列缓存字段因此留着未接线（`updateSummary` 无人调用，恒为 null），删列要走一次 Room 迁移，
+ * 不如留着，哪天改主意了写侧补一行即可。
  */
 @Entity(tableName = "servers")
 data class ServerEntity(

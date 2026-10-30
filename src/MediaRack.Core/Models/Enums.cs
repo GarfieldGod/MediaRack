@@ -10,13 +10,6 @@ public enum SourceLayout
     Single,
 }
 
-/// <summary>源的访问方式。服务端只索引本机目录，<see cref="Http"/> 仅客户端侧有意义。</summary>
-public enum SourceKind
-{
-    Local,
-    Http,
-}
-
 /// <summary>服务端视野层面的虚拟写权限。磁盘层面永远不可写。</summary>
 public enum VirtualWrite
 {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""契约自检：解析 openapi.v1.yaml，验证所有 $ref 可解析、必做端点齐全。
+"""契约自检：解析 openapi.v1.yaml，验证所有 $ref 可解析、必做端点齐全、代码路由全部在契约里。
 
 用法：
     python scripts/check/check_contract.py
@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -18,6 +19,16 @@ except ImportError:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CONTRACT = ROOT / "contracts" / "openapi.v1.yaml"
+SERVER_DIR = ROOT / "src" / "MediaRack.Server"
+
+# 不写进契约的注册：内嵌页面本身（静态资源，不是 API）。
+# 门户前缀 /s/{slug} 不在路由表里（中间件剥前缀），所以不会出现在这里。
+IGNORED_ROUTES = {("GET", "/")}
+
+# 认得出 `app.MapGet("/api/v1/x", ...)` 这种字面量注册。
+# 用常量/拼接传路径的注册抓不到——那种写法本来就该避免。
+ROUTE_RE = re.compile(r'Map(Get|Post|Patch|Delete|Put)\(\s*"([^"]+)"')
+PARAM_RE = re.compile(r"\{[^}]*\}")
 
 # 契约必须覆盖的端点（缺一个就说明实现会缺能力）
 REQUIRED_PATHS = [
@@ -64,6 +75,40 @@ def deref(spec: dict, ref: str):
     return True
 
 
+def norm(path: str) -> str:
+    """路径同名化：`{source}` 与 `{id}`、`{folderId:long}` 都折成 `{}`。
+
+    参数名本身不是契约的一部分（客户端按位置填），路由形状才是。
+    """
+    return PARAM_RE.sub("{}", path)
+
+
+def code_routes() -> set[tuple[str, str]]:
+    """代码里注册的全部 (方法, 路径)。只认字面量路径，见 ROUTE_RE 的说明。"""
+    routes: set[tuple[str, str]] = set()
+    if not SERVER_DIR.exists():
+        return routes
+    for f in SERVER_DIR.rglob("*.cs"):
+        if {"bin", "obj"} & set(f.parts):
+            continue
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        for m in ROUTE_RE.finditer(text):
+            routes.add((m.group(1).upper(), m.group(2)))
+    return routes
+
+
+def contract_routes(spec: dict) -> set[tuple[str, str]]:
+    """契约里声明了方法的 (方法, 路径)。只写参数没写方法的 path 不算。"""
+    out: set[tuple[str, str]] = set()
+    for path, ops in (spec.get("paths") or {}).items():
+        if not isinstance(ops, dict):
+            continue
+        for method in ops:
+            if method.lower() in ("get", "post", "patch", "delete", "put"):
+                out.add((method.upper(), path))
+    return out
+
+
 def main() -> int:
     if not CONTRACT.exists():
         print(f"FAIL 找不到契约文件：{CONTRACT}")
@@ -107,6 +152,19 @@ def main() -> int:
         if p.startswith("/api/v1/media/") and "{source}" not in p:
             errors.append(f"条目端点缺少 {{source}} 段：{p}")
 
+    # 5. 代码里的每条路由都必须写在契约里，反之亦然。
+    #    这条检查是补的：在此之前契约只校验"自己长得对不对"，实现可以悄悄多出
+    #    十个端点而没人发现（管理台那批就是这么漂出去的）。
+    code = {(m, p) for m, p in code_routes() if (m, p) not in IGNORED_ROUTES}
+    declared = contract_routes(spec)
+    code_norm = {(m, norm(p)) for m, p in code}
+    declared_norm = {(m, norm(p)) for m, p in declared}
+
+    for m, p in sorted(code_norm - declared_norm):
+        errors.append(f"代码里有、契约没写：{m} {p}")
+    for m, p in sorted(declared_norm - code_norm):
+        errors.append(f"契约里有、代码没实现：{m} {p}")
+
     total = len(have)
     if errors:
         print(f"FAIL 契约校验未通过（{len(errors)} 个问题）")
@@ -114,7 +172,8 @@ def main() -> int:
             print("  -", e)
         return 1
 
-    print(f"OK   openapi {spec['openapi']} · {total} 个端点 · 全部 $ref 可解析")
+    print(f"OK   openapi {spec['openapi']} · {total} 个路径 · {len(declared)} 个方法 · "
+          f"代码 {len(code)} 条路由全部在契约里 · 全部 $ref 可解析")
     return 0
 
 

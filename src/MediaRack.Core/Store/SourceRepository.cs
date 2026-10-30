@@ -264,16 +264,6 @@ public sealed class SourceRepository(LibraryDatabase db)
         return cmd.ExecuteNonQuery() > 0;
     }
 
-    public bool SetLastScan(string id, int count, long at)
-    {
-        using var cmd = db.Connection.CreateCommand();
-        cmd.CommandText = "UPDATE source SET last_count = $c, last_scan_at = $t WHERE id = $id;";
-        cmd.Parameters.AddWithValue("$id", id);
-        cmd.Parameters.AddWithValue("$c", count);
-        cmd.Parameters.AddWithValue("$t", at);
-        return cmd.ExecuteNonQuery() > 0;
-    }
-
     /// <summary>slug 是否已被别的源占用（<paramref name="exceptId"/> 是"自己"，改名时排除）。</summary>
     public bool IsSlugTaken(string slug, string? exceptId = null) =>
         List().Any(s =>

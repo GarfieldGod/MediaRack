@@ -89,15 +89,17 @@ Player    播放器。1 条轨走单流，2 条轨走双流合成；不关心 fi
 | `single` | 物理目录（含祖先闭包：`A/B/ep1.mp4` 使 `A` 与 `A/B` 都成为合集；没有直接视频的目录不算合集） |
 | `dual` | UP 主 |
 
-- **源级、平铺、排他、只读**。每个视频恰属于一个合集。合集内容由扫描全量重算，手工改名/增删一律 400。
-- id 前缀区分来源，**不加 `kind` 列**（省一次迁移）：
+- **源级、平铺、排他、只读**。每个视频恰属于一个合集（记在 `media.collection_id` 上，
+  不是关联表——关联表做排他是软约束，写在条目行上才写死）。合集内容由扫描全量重算，手工改名/增删一律 400。
+- id 语义化、可调试，**不加 `kind` 之外的派生列**：
 
 | 来源 | id 形式 | 谁维护 |
 |---|---|---|
-| 自动合集 | `dir:<source_id>:<rel_dir>` | 每次扫描重算 |
-| 手工收藏夹 | `col:<12 位随机 hex>` | 只由用户改，扫描永不触碰 |
+| `single` 目录合集 | `dir:<source_id>:<rel_dir>`（源根是 `dir:<source>:/`） | 每次扫描重算 |
+| `dual` UP 主合集 | `up:<source_id>:<up_mid>`（缺 owner 是 `up:<source>:unknown`） | 每次扫描重算 |
 
-由此得到一条硬性质：**重扫不可能破坏用户的手工组织**；名称是显示值，改名不丢关联。
+由此得到一条硬性质：**重扫不可能破坏用户的手工组织**——收藏（`favorite*` 三表）从 v4 起就与合集彻底分家，
+扫描只碰结构层。名称是显示值，改名不丢关联。
 
 ## 4. 元数据
 
@@ -125,21 +127,24 @@ Player    播放器。1 条轨走单流，2 条轨走双流合成；不关心 fi
 仅当 `virtualWrite = none` 时启用：`显示值 = 客户端本地覆盖 ?? 服务端源端元数据`。
 存客户端数据库，不上报。这是例外路径。
 
-### 4.4 收藏夹：多对多
+### 4.4 收藏夹：多对多、跨源、跨端
 
 ```
-collection(id, name, parent_id, sort_order)      -- 支持树
-collection_item(collection_id, source_id, key, sort_order)
+favorite(id, name, sort_order, created_at)              -- id 是 fav:<uuid>，老数据沿用 col:<hex>
+favorite_item(favorite_id, source_id, key, added_at)    -- 收藏的视频（可跨源）
+favorite_collection(favorite_id, collection_id, added_at) -- 收藏的合集
 ```
 
 与物理目录是两个正交维度：
 
 | 维度 | 来源 | 数量 | 可变 |
 |---|---|---|---|
-| 物理目录 | 扫描时记录 | 一个视频一个 | 不可变（改不了文件） |
-| 虚拟收藏夹 | 用户创建 | 一个视频多个 | 任意重组 |
+| 物理目录 / UP 主（合集） | 扫描时派生 | 一个视频一个 | 不可变（改不了文件） |
+| 收藏夹 | 用户创建 | 一个视频多个 | 任意重组 |
 
 收藏是**用户层**：跨源、跨端同步，不属于任何源，因此不挂在源列表里。
+v4 之前收藏借住 `collection` / `collection_item` 两张表（自带 `parent_id` 想做成树）；
+现在那张表只剩"扫描投影"一个职责，`collection_item` 已删，`collection.parent_id` 恒 NULL。
 
 ### 4.5 继续观看与连播
 
@@ -175,10 +180,10 @@ collection_item(collection_id, source_id, key, sort_order)
 | 表 | 作用 |
 |---|---|
 | `source` / `source_folder` | 源的登记信息；**一个源可挂多个文件夹**（v3），真相以 `source_folder` 为准 |
-| `media` | 条目，主键 `(source_id, key)`；路径存**相对路径**，换盘不失效 |
+| `media` | 条目，主键 `(source_id, key)`；路径存**相对路径**，换盘不失效；`collection_id` 记排他归属 |
 | `media_track` | 双流分轨（`video` / `audio` 的 size / md5 / codecid） |
 | `media_meta` | 虚拟元数据（权威，在线可写）：标题、标签、隐藏、旋转、进度、`rev` |
-| `collection` / `collection_item` | 合集（自动合集由扫描全量重建） |
+| `collection` | 合集投影（v4 起只有这一张；`collection_item` 已在 v4 删除，`parent_id` 恒 NULL 无人读） |
 | `favorite` / `favorite_item` / `favorite_collection` | 跨端收藏（v4）：视频与合集都能收藏，可跨源 |
 | `content_fp` | single 条目内容指纹台账（v5）：见下 |
 | `last_session` | 继续观看 |
@@ -245,14 +250,19 @@ single：按扩展名遍历（跳过隐藏系统目录） → ffprobe 取时长/
 | 播放 | `GET /play/{source}/{key}?mode=auto\|direct\|remux\|transcode`（逃生舱） |
 | 图像 | `GET /poster/{source}/{key}.jpg`（封面）、`/media/{source}/{key}/thumb.jpg`（网格缩略图） |
 | 管理 | `POST /api/v1/meta/{source}/{key}`、`/collections`、`/progress/{source}/{key}` |
-| 收藏 | `GET /api/v1/favorites`、`/favorites/{id}/items`、`/favorites/{id}/collections`、`/media/{source}/{key}/favorites`（这条在哪些收藏夹里） |
-| 扫描 | `POST /api/v1/scan` → 202，`GET /api/v1/scan/{jobId}` |
+| 收藏 | `GET /api/v1/favorites`、`PATCH`/`DELETE /favorites/{id}`、`/favorites/{id}/items`、`/favorites/{id}/collections`、`/media/{source}/{key}/favorites`（这条在哪些收藏夹里） |
+| 扫描 | `POST /api/v1/scan` → 202、`GET /api/v1/scan`（最近的）、`GET /api/v1/scan/{jobId}`、`POST /api/v1/scan/{jobId}/cancel` |
+| 管理台（仅本机） | `GET`/`PATCH /api/v1/services`、`POST /api/v1/sources`、`PATCH`/`DELETE /api/v1/sources/{id}`、`POST /api/v1/sources/{id}/folders`、`PATCH`/`DELETE …/folders/{folderId}`、`POST /api/v1/meta/batch`、`POST /api/v1/maintenance/purge-missing` |
 | 配对 | `GET /api/v1/auth/pairing`、`/auth/pairing/qr?host=` |
 | 鉴权 | `GET /api/v1/auth/state`、`POST /auth/login`、`/auth/logout` |
 | 运维 | `GET /api/v1/health`、`/api/v1/export/{source}/{key}.mp4` |
 
-共 **27** 个端点。「这条在哪些收藏夹里」必须单开端点：没有它就得为每个收藏夹翻一遍列表
+共 **34 个路径 / 42 个方法**。「这条在哪些收藏夹里」必须单开端点：没有它就得为每个收藏夹翻一遍列表
 （N 次分页请求）才能画出勾选状态。
+
+管理台那批带 `admin` tag：只有服务端自带的管理页（本机根路径）调用，客户端不碰，
+在源门户下一律 403。它们**也写进契约**——"契约里没有的实现"迟早会变成两套口径，
+而 `scripts/check/check_contract.py` 现在会逐条比对代码路由与契约（双向），漏一条就红。
 
 **所有路径都带 `{source}` 段** —— 这是「源独立」在接口层的体现，不存在脱离源的全局 key 操作。
 
@@ -322,8 +332,8 @@ single：按扩展名遍历（跳过隐藏系统目录） → ffprobe 取时长/
 ### 10.1 一条配置 = 一个源（两端同一模型）
 
 客户端只认「源」，不认「服务端」：配一条 = 连一个源，字段就是管理页「访问方式」里的那张表。
-**字段是同一组，呈现按输入设备分**：Android 四栏（软键盘各有键盘类型，主路径是扫码），
-PC 一栏源地址 + 令牌 + 名称（管理页给的本来就是一条完整地址，每行带「复制」）。
+**字段是同一组，呈现按输入设备分**：Android 四个必填栏（服务器地址 / 端口 / 源标识 / 令牌，软键盘各有键盘类型，
+主路径是扫码）+ 选填名称；PC 一栏源地址 + 令牌 + 名称（管理页给的本来就是一条完整地址，每行带「复制」）。
 
 | 字段 | 含义 | 缺省 |
 |---|---|---|
@@ -363,7 +373,7 @@ PC 一栏源地址 + 令牌 + 名称（管理页给的本来就是一条完整�
 |---|---|---|
 | 主路径 | 二维码 `http://<host>:<port>/s/{slug}#token=...` | 地址+端口+源+令牌一步到位；跨网段可用；零组播依赖 |
 | 同网段捷径 | mDNS 广播（仅 Android） | 同一 WiFi 免手填 IP |
-| 永久兜底 | 手填四栏 | AP 隔离 / 跨 VLAN / VPN 等组播到不了的场景 |
+| 永久兜底 | 手填（PC 一条完整地址；Android 四个必填栏） | AP 隔离 / 跨 VLAN / VPN 等组播到不了的场景 |
 
 mDNS 的 TXT 记录**绝不含令牌**。AP 隔离是组播的现实杀手（路由器隔离客户端，代码修不了），
 发现列表为空时要引导用户退回扫码或手输，而不是让人以为 App 坏了。

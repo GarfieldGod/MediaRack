@@ -129,10 +129,6 @@ public sealed record FavoriteCollectionsPatchDto(
     IReadOnlyList<string>? Add,
     IReadOnlyList<string>? Remove);
 
-public sealed record CollectionItemsPatchDto(
-    IReadOnlyList<ItemRefDto>? Add,
-    IReadOnlyList<ItemRefDto>? Remove);
-
 public sealed record ItemRefDto(string Source, string Key);
 
 /// <summary>

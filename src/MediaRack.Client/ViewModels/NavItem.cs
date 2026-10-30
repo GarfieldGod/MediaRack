@@ -5,8 +5,9 @@ namespace MediaRack.Client.ViewModels;
 ///
 /// Kind：
 /// <c>all</c> 全部视频（聚合视图，跨源去重）/ <c>source</c> 单个源 /
-/// <c>favorite</c> 收藏夹 / <c>recent</c> 继续观看 / <c>collections</c> 合集页（网格）/
-/// <c>collection</c> 某个合集内部（海报墙，走单源列表 + collection 过滤）。
+/// <c>favorite</c> 收藏夹 / <c>recent</c> 继续观看 / <c>collections</c> 合集页（网格）。
+///
+/// 点进某个合集后不再造新的导航项：合集页原地换成海报墙，工具栏给返回。
 ///
 /// 合集不进侧栏平铺——生产的库里 955 个合集（602 个 UP + 353 个目录），
 /// 平铺出来等于没法用。所以它有一层自己的网格页，点进去才变成海报墙。
@@ -25,13 +26,6 @@ public sealed class NavItem(string kind, string? id, string title, string subtit
     public bool IsFavorite => Kind == "favorite";
     public bool IsRecent => Kind == "recent";
     public bool IsCollections => Kind == "collections";
-    public bool IsCollection => Kind == "collection";
-
-    /// <summary>这一项是不是"源的兄弟"（左侧第一组列表要选中它）。</summary>
-    public bool BelongsSourceGroup => Kind is "all" or "source" or "recent" or "collections";
-
-    /// <summary>能不能在下面再叠一层合集下拉（只有全部视图有意义：跨源合集没有统一口径）。</summary>
-    public bool AllowsCollectionFilter => Kind is "all";
 }
 
 /// <summary>合集下拉的一项（含开头的「全部合集」）。</summary>

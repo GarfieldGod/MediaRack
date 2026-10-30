@@ -62,7 +62,7 @@ public sealed class SourceSession : ViewModelBase
     /// <summary>左栏点这一行 = 切到这个源（命令挂在行上，视图不用往上游找 ViewModel）。</summary>
     public RelayCommand ActivateCommand { get; }
 
-    /// <summary>行右侧的「改」：进连接页并预填这条的四栏，改完重连即替换这个会话。</summary>
+    /// <summary>行右侧的「改」：进连接页并预填这条的地址与令牌，改完重连即替换这个会话。</summary>
     public RelayCommand EditCommand { get; }
 
     /// <summary>行右侧的「✕」：断开并从列表移除。<b>不动配置文件</b>，连接页仍能重连。</summary>

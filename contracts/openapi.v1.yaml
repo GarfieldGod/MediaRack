@@ -63,6 +63,11 @@ tags:
     description: 运维
   - name: auth
     description: 鉴权（仅在服务端配了令牌时才需要）
+  - name: admin
+    description: |
+      管理台专用（**仅本机根路径**，源门户下返回 403）。
+      客户端（PC / Android）不调用这些端点，因此它们的变化不影响客户端兼容性——
+      但仍写进契约，因为"契约里没有的实现"迟早会变成两套口径。
 
 paths:
   # ── 源与库 ────────────────────────────────────────────────
@@ -82,6 +87,43 @@ paths:
                   sources:
                     type: array
                     items: { $ref: '#/components/schemas/Source' }
+
+  # ── 管理台：源与文件夹 ────────────────────────────────────
+  # 建源只登记"身份"（名称 / slug / 令牌），内容靠文件夹列表逐个加：
+  # 一个源可以有多个根，建源时就要挑目录的老表单会让人误以为只能有一个。
+    post:
+      tags: [admin]
+      summary: 建源（只登记身份，不含文件夹）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, description: 留空则用 slug }
+                slug: { type: string, description: 留空自动生成；手写撞名报 409 }
+                token: { type: string, description: 留空自动生成 }
+      responses:
+        '200':
+          description: 已建，返回源概况（字段同管理台列表里的单项）与可选的即时扫描 jobId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: object, description: AdminSource（id/slug/name/token/folders/lastScanAt/…）}
+                  jobId: { type: string, nullable: true }
+        '400':
+          description: 请求体不是合法 JSON，或 slug 不合规
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: slug 已被占用（`slug_taken`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/sources/{source}/library:
     get:
@@ -510,6 +552,18 @@ paths:
           description: OK
 
   /api/v1/scan:
+    get:
+      tags: [manage]
+      summary: 最近的扫描任务（内存里的，最多十几条）
+      description: 管理页刷新时用它恢复进度条：任务只存在内存里，进程重启后列表为空。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ScanJob' }
     post:
       tags: [manage]
       summary: 触发扫描
@@ -686,6 +740,356 @@ paths:
           description: 导出任务已开始，稍后重试同一 URL
         '404':
           $ref: '#/components/responses/MediaNotFound'
+
+  # ── 管理台：服务器与源维护 ────────────────────────────────
+  /api/v1/services:
+    get:
+      tags: [admin]
+      summary: 管理台首屏（本机候选地址 + 各源概况）
+      description: |
+        `hosts` 是手机/局域网电脑可以试的地址，`sources` 每项带 `itemCount / missingCount /
+        totalBytes / lastScanAt / reachable`。管理页的左栏与统计卡片全靠这一条。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  port: { type: integer }
+                  publicUrl: { type: string, nullable: true }
+                  hosts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address: { type: string }
+                        kind: { type: string, description: loopback / virtual / lan / other }
+                        port: { type: integer }
+                  sources:
+                    type: array
+                    items: { type: object, description: AdminSource }
+        '403':
+          description: 源门户下调用（管理端点只在本机根路径可用）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [admin]
+      summary: 写公网地址（落到 config.json 的 publicUrl）
+      description: 公网地址没法自动探测（NAT 后面看不到出口 IP），只能手填；二维码会带上它。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                publicUrl: { type: string, nullable: true, description: 空 = 清除；必须是 http(s):// 开头 }
+      responses:
+        '200':
+          description: 已保存
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publicUrl: { type: string, nullable: true }
+        '400':
+          description: 没有配置文件可写 / 地址不是 http(s) / 请求体非法
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/sources/{id}:
+    patch:
+      tags: [admin]
+      summary: 改源信息（只改给出的字段）
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                slug: { type: string }
+                token: { type: string }
+                virtualWrite: { type: string, enum: [none, whitelist, full] }
+      responses:
+        '200':
+          description: 改后的源概况（AdminSource）
+          content:
+            application/json:
+              schema: { type: object, description: AdminSource }
+        '400':
+          description: 请求体非法 / slug 不合规
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          $ref: '#/components/responses/SourceNotFound'
+    delete:
+      tags: [admin]
+      summary: 删源（磁盘文件一行不动）
+      description: |
+        默认 `withArchive=false`：只删源登记、文件夹、该源条目与合集投影。
+        旋转 / 进度 / 标题 / 标签 / 收藏（`media_meta`、`favorite_item`）留着——
+        键在 `(source_id, key)` 与内容指纹上，文件回来（哪怕重新加源）能自动认回。
+        `withArchive=true` 连档案与收藏一起删，删完没有痕迹。
+        删除前会先掐掉该源未完成的扫描任务，否则扫描线程下一批 Upsert 会把条目写回来。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: withArchive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: 删除结果（各层删了多少、留了多少）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sourceId: { type: string }
+                  mediaRemoved: { type: integer }
+                  foldersRemoved: { type: integer }
+                  collectionsRemoved: { type: integer }
+                  metaRemoved: { type: integer }
+                  favoriteItemsRemoved: { type: integer }
+                  metaKept: { type: integer }
+                  favoriteItemsKept: { type: integer }
+                  fingerprintsRemoved: { type: integer }
+                  cancelledJobs: { type: integer }
+                  withArchive: { type: boolean }
+        '404':
+          $ref: '#/components/responses/SourceNotFound'
+
+  /api/v1/sources/{id}/folders:
+    post:
+      tags: [admin]
+      summary: 给源添加文件夹（多对多，布局跟文件夹走）
+      description: 添加后立刻起一次该源的扫描，返回的 `jobId` 用于轮询进度。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root]
+              properties:
+                root: { type: string, description: 绝对路径；必须已存在 }
+                layout: { type: string, enum: [auto, single, dual], description: 省略 = auto（扫描时识别并写回） }
+      responses:
+        '200':
+          description: 加完后的源概况 + 扫描 jobId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: object, description: AdminSource }
+                  jobId: { type: string, nullable: true }
+        '400':
+          description: 路径不合法 / 目录不存在 / 请求体非法
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          $ref: '#/components/responses/SourceNotFound'
+        '409':
+          description: 这个文件夹已登记在该源里（`folder_exists`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/sources/{id}/folders/{folderId}:
+    patch:
+      tags: [admin]
+      summary: 改文件夹布局（改了必定重扫）
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: folderId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layout]
+              properties:
+                layout: { type: string, enum: [auto, single, dual] }
+      responses:
+        '200':
+          description: 改后的源概况 + 重扫 jobId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: object, description: AdminSource }
+                  jobId: { type: string, nullable: true }
+        '400':
+          description: 缺 layout / 值不合法
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: 源或文件夹不存在（`folder_not_found`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [admin]
+      summary: 移除文件夹（条目不动，随后的重扫会把它们标 missing）
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: folderId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: 移除后的源概况 + 重扫 jobId
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: object, description: AdminSource }
+                  jobId: { type: string, nullable: true }
+        '404':
+          description: 源或文件夹不存在（`folder_not_found`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ── 管理台：批量与维护 ────────────────────────────────────
+  /api/v1/meta/batch:
+    post:
+      tags: [admin]
+      summary: 批量改虚拟元数据（旋转 / 隐藏 / 标签 / 合集归属）
+      description: |
+        逐个 Apply、**不带 expectedRev**：批量选中的条目可能刚被别处改过，
+        整批因为一条 rev 冲突失败比"改成功的都改成功"更让人意外。
+        失败的 key 单独回在 `failed` 里，前端逐条提示。
+        某个字段整源禁改（virtualWrite 不含它）则整批 403，不做"能改几个改几个"。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, keys]
+              properties:
+                source: { type: string }
+                keys:
+                  type: array
+                  items: { type: string }
+                rotation: { type: integer, enum: [0, 90, 180, 270] }
+                hidden: { type: boolean }
+                tags:
+                  type: array
+                  items: { type: string }
+                collection: { type: string, description: 'dir:/…、up:… 或 custom:…；空串 = 恢复自动归类' }
+      responses:
+        '200':
+          description: 逐条结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: integer }
+                  failed:
+                    type: array
+                    items: { type: string }
+        '400':
+          description: 缺 source/keys、rotation 非法、collection 前缀不对、没有任何可改字段
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: 该源的虚拟写权限不允许改其中某个字段
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/scan/{jobId}/cancel:
+    post:
+      tags: [admin]
+      summary: 取消扫描任务
+      description: |
+        running 进入 cancelling，扫描 / 抽帧在下个检查点停下（已入库的条目保留，
+        upsert 幂等，重扫即续）。已结束的任务返回 404。
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 取消后的任务状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanJob' }
+        '404':
+          description: 任务不存在或已结束（`job_not_found`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/maintenance/purge-missing:
+    post:
+      tags: [admin]
+      summary: 清理 missing 条目（用户在管理页显式点的动作）
+      description: |
+        删掉"磁盘上已不存在"的条目行，并重算合集投影（只挂在被删条目上的空合集会一起消失）。
+        档案（`media_meta`）默认留成无主锚点——文件搬回来时靠它认回改名/进度。
+      parameters:
+        - name: source
+          in: query
+          required: false
+          schema: { type: string, description: 只清这个源；省略 = 全库 }
+      responses:
+        '200':
+          description: 清理结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+                  anchorsKept: { type: integer }
+                  orphanFingerprints: { type: integer }
+                  collections: { type: integer, description: 清理后重建的合集数 }
+        '404':
+          $ref: '#/components/responses/SourceNotFound'
 
 components:
   securitySchemes:

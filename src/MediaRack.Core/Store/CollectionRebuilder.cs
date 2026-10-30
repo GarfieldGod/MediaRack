@@ -61,22 +61,19 @@ public sealed class CollectionRebuilder(LibraryDatabase db)
         insert.Transaction = tx;
         insert.CommandText =
             """
-            INSERT OR REPLACE INTO collection (id, name, parent_id, sort_order, source_id, kind, path)
-            VALUES ($id, $name, NULL, $sort, $sid, $kind, $path);
+            INSERT OR REPLACE INTO collection (id, name, source_id, kind, path)
+            VALUES ($id, $name, $sid, $kind, $path);
             """;
         var pId = insert.Parameters.Add("$id", SqliteType.Text);
         var pName = insert.Parameters.Add("$name", SqliteType.Text);
-        var pSort = insert.Parameters.Add("$sort", SqliteType.Integer);
         var pSid = insert.Parameters.Add("$sid", SqliteType.Text);
         var pKind = insert.Parameters.Add("$kind", SqliteType.Text);
         var pPath = insert.Parameters.Add("$path", SqliteType.Text);
 
-        var sort = 0;
         foreach (var f in folders)
         {
             pId.Value = FolderId(f.SourceId, f.RelDir);
             pName.Value = FolderDisplayName(f.RelDir, sourceNames.GetValueOrDefault(f.SourceId) ?? f.SourceId);
-            pSort.Value = sort++;
             pSid.Value = f.SourceId;
             pKind.Value = "folder";
             pPath.Value = f.RelDir;
@@ -87,7 +84,6 @@ public sealed class CollectionRebuilder(LibraryDatabase db)
         {
             pId.Value = UpId(u.SourceId, u.Mid);
             pName.Value = u.UpName ?? "未识别 UP 主";
-            pSort.Value = sort++;
             pSid.Value = u.SourceId;
             pKind.Value = "up";
             pPath.Value = u.Mid;
@@ -103,10 +99,10 @@ public sealed class CollectionRebuilder(LibraryDatabase db)
         customInsert.Transaction = tx;
         customInsert.CommandText =
             """
-            INSERT OR REPLACE INTO collection (id, name, parent_id, sort_order, source_id, kind, path)
+            INSERT OR REPLACE INTO collection (id, name, source_id, kind, path)
             SELECT DISTINCT
                 'custom:' || mt.source_id || ':' || substr(mt.collection, 8),
-                substr(mt.collection, 8), NULL, 5000, mt.source_id, 'custom', substr(mt.collection, 8)
+                substr(mt.collection, 8), mt.source_id, 'custom', substr(mt.collection, 8)
             FROM media_meta mt
             WHERE mt.collection LIKE 'custom:%'
               AND EXISTS (
@@ -246,8 +242,8 @@ public sealed class CollectionRebuilder(LibraryDatabase db)
             using var ci = db.Connection.CreateCommand();
             ci.CommandText =
                 """
-                INSERT OR REPLACE INTO collection (id, name, parent_id, sort_order, source_id, kind, path)
-                VALUES ($id, $name, NULL, 5000, $sid, 'custom', $name);
+                INSERT OR REPLACE INTO collection (id, name, source_id, kind, path)
+                VALUES ($id, $name, $sid, 'custom', $name);
                 """;
             ci.Parameters.AddWithValue("$id", resolved);
             ci.Parameters.AddWithValue("$name", name);

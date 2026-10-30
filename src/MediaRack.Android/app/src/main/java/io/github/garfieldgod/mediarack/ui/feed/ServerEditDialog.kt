@@ -43,8 +43,8 @@ import kotlinx.coroutines.launch
  * 添加 / 编辑远程源。抽屉里唯一的源管理入口（独立的源管理页已删除）。
  *
  * **一条配置 = 一个源**（服务端源门户版）：服务器只有 `http://ip:port/s/{源地址}` 一个
- * 对外入口，令牌跟源走。所以四栏——服务器地址、端口、源地址（slug）、访问令牌，
- * 与服务端管理页「访问方式」里的字段一一对应；名称留空时自动取服务端里的源名。
+ * 对外入口，令牌跟源走。所以四个必填栏——服务器地址、端口、源地址（slug）、访问令牌，
+ * 与服务端管理页「访问方式」里的字段一一对应；名称是第五个、选填，留空时自动取服务端里的源名。
  *
  * 扫码配对：电脑端管理页出的二维码内容是 `http://<ip>:<port>/s/{slug}#token=xxx`，
  * 扫到直接回填四项。只在新增时给——编辑已有源没有重新扫的理由。
@@ -181,7 +181,7 @@ fun ServerEditDialog(
             TextButton(onClick = onDismiss, enabled = !saving) { Text("取消") }
         },
         title = {
-            // 标题与扫码按钮同行：扫码是"填这四栏"的另一条路，摆在字段旁边而不是底部
+            // 标题与扫码按钮同行：扫码是"填这几个栏"的另一条路，摆在字段旁边而不是底部
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,

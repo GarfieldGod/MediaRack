@@ -444,16 +444,6 @@ public sealed class PlayerViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>引擎实际的静音状态（自检用；部分 aout 不回报，改用 <see cref="EngineVolume"/> 断言）。</summary>
-    public bool EngineMuted
-    {
-        get
-        {
-            try { return _player?.Mute ?? false; }
-            catch { return false; }
-        }
-    }
-
     /// <summary>引擎实际音量（自检用：静音 = 音量 0）。</summary>
     public double EngineVolume
     {

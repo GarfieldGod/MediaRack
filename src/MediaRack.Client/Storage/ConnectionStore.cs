@@ -6,11 +6,12 @@ namespace MediaRack.Client.Storage;
 
 /// <summary>
 /// 一条已保存的连接配置 = <b>一个源</b>（源门户 <c>http://host:port/s/{slug}</c>）。
-/// 与 Android 端 <c>core/db/ServerEntity</c> 一一对应：地址、端口、源地址、令牌四栏
-/// 就是服务端管理页「访问方式」里的四个字段。
-///
-/// 落盘仍然只有 base URL 一条（四栏是它的展开式），拆解见 <see cref="ApiClient.SplitSourceBaseUrl"/>——
-/// 存储格式不因界面从两栏变四栏而变化，老配置照样能读。
+/// 落盘只有 base URL + 令牌两条：PC 端用一个完整地址框输入，<see cref="ApiClient.SplitSourceBaseUrl"/>
+/// 只负责把它拆回 host / port / path 供列表显示，不参与存储。
+/// <para>
+/// 与 Android 端 <c>core/db/ServerEntity</c> 的对应关系是"同一个源"，不是"同一堆字段"：
+/// 那边按字段存（地址、名称各自一栏），这边一条 base URL 就够，老配置照样能读。
+/// </para>
 /// </summary>
 public sealed class ServerEntry
 {
@@ -25,7 +26,7 @@ public sealed class ServerEntry
     [JsonIgnore]
     public string DisplayName => string.IsNullOrWhiteSpace(Name) ? BaseUrl : Name;
 
-    /// <summary>四栏的展开式（编辑时回填表单用）。</summary>
+    /// <summary>base URL 的拆解结果（列表显示用，不参与存储）。</summary>
     [JsonIgnore]
     public (string Host, string Port, string SourcePath) Fields => ApiClient.SplitSourceBaseUrl(BaseUrl);
 

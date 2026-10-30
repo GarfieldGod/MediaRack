@@ -47,7 +47,11 @@ interface ServerDao {
     @Query("UPDATE servers SET name = :name, base_url = :baseUrl, token = :token WHERE id = :id")
     suspend fun update(id: Long, name: String, baseUrl: String, token: String?)
 
-    /** 记录最近一次成功拉取的聚合列表（断网降级数据源）。json=null 清除缓存。 */
+    /**
+     * 断网降级缓存的写入口——**未接线**（降级已决定不做，见 [ServerEntity]）。
+     * 保留它 + 两列是为了哪天改主意时不必再迁一次 schema；调用它是"重新启用降级"的信号，
+     * 顺手要把 FeedViewModel 里 `lastSummaryJson` 的读取与灰条目一起想清楚。
+     */
     @Query("UPDATE servers SET last_summary_json = :json, fetched_at = :at WHERE id = :id")
     suspend fun updateSummary(id: Long, json: String?, at: Long?)
 }
@@ -112,13 +116,6 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE server_id = :serverId AND key = :key")
     suspend fun delete(serverId: Long, key: String)
-
-    // 「我的」页统计
-    @Query("SELECT COUNT(*) FROM downloads WHERE status = 'done'")
-    fun observeDoneCount(): Flow<Int>
-
-    @Query("SELECT COALESCE(SUM(bytes_done), 0) FROM downloads WHERE status = 'done'")
-    fun observeDoneBytes(): Flow<Long>
 }
 
 @Dao
@@ -145,9 +142,6 @@ interface ItemDao {
 
     @Query("SELECT * FROM items WHERE source_id = :sourceId AND status = 'ok'")
     suspend fun listOkBySource(sourceId: Long): List<ItemEntity>
-
-    @Query("SELECT * FROM items WHERE status = 'ok'")
-    suspend fun listAllOk(): List<ItemEntity>
 
     /** 「已下载」统计口径：本地缓存条目（含手机 B 站缓存与下载落盘），不是下载任务表。 */
     @Query("SELECT COUNT(*) FROM items WHERE status = 'ok'")

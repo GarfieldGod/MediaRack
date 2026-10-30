@@ -164,7 +164,4 @@ public sealed record PosterReport(
     int Remaining,
     int Pending,
     IReadOnlyList<PosterOutcome> Outcomes,
-    IReadOnlyList<PosterProblem> Problems)
-{
-    public int Processed => Generated + Skipped + Failed;
-}
+    IReadOnlyList<PosterProblem> Problems);

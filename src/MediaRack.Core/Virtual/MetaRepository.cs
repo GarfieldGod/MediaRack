@@ -127,21 +127,6 @@ public sealed class MetaRepository(LibraryDatabase db)
         return WriteResult.Applied(next);
     }
 
-    /// <summary>统计某个源里被覆盖过标题的条目数，供体检与审计打印。</summary>
-    public int CountOverrides(string sourceId)
-    {
-        using var cmd = db.Connection.CreateCommand();
-        cmd.CommandText =
-            """
-            SELECT COUNT(*) FROM media_meta
-            WHERE source_id = $sid
-              AND (title_display IS NOT NULL OR tags IS NOT NULL AND tags <> '[]'
-                   OR hidden <> 0 OR rotation <> 0 OR collection IS NOT NULL OR rev > 0);
-            """;
-        cmd.Parameters.AddWithValue("$sid", sourceId);
-        return Convert.ToInt32(cmd.ExecuteScalar());
-    }
-
     /// <summary>
     /// 把一条 meta 原样复制到另一个条目名下（内容指纹迁移用）。
     /// 目标已有 meta 时不覆盖——目标位置上用户可能已经改过设置，认领只填空位。
@@ -172,16 +157,6 @@ public sealed class MetaRepository(LibraryDatabase db)
         cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         cmd.Parameters.AddWithValue("$by", (object?)actor ?? DBNull.Value);
         return cmd.ExecuteNonQuery() > 0;
-    }
-
-    /// <summary>旧位置 meta 行是否还活着（media 行可能已被别的流程清掉，meta 行独立存在）。</summary>
-    public bool HasMeta(string sourceId, string key)
-    {
-        using var cmd = db.Connection.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM media_meta WHERE source_id = $sid AND key = $key;";
-        cmd.Parameters.AddWithValue("$sid", sourceId);
-        cmd.Parameters.AddWithValue("$key", key);
-        return cmd.ExecuteScalar() is not null;
     }
 
     private bool MediaExists(string sourceId, string key)

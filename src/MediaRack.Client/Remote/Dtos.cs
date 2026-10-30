@@ -177,12 +177,6 @@ public sealed class FavoriteItemsPatch
     public List<ItemRefBody>? Remove { get; set; }
 }
 
-public sealed class FavoriteCollectionsPatch
-{
-    public List<string>? Add { get; set; }
-    public List<string>? Remove { get; set; }
-}
-
 public sealed class NamePatch
 {
     public string Name { get; set; } = "";

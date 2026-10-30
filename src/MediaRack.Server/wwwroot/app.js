@@ -83,8 +83,6 @@ function toast(message, isError = false) {
   toast.timer = setTimeout(() => { box.hidden = true; }, isError ? 6000 : 3000);
 }
 
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-
 function humanSize(bytes) {
   if (!bytes) return '';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];

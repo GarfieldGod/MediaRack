@@ -13,11 +13,6 @@ public static class SourceIdentity
     public const int MaxSlugLength = 32;
 
     /// <summary>
-    /// 手写令牌的建议长度。低于它不拦（用户有权用短令牌），只在上层给提示。
-    /// </summary>
-    public const int SuggestedTokenLength = 16;
-
-    /// <summary>
     /// 把任意文本压成 URL 段：只保留 <c>a-z0-9</c>，其余折叠成一个 <c>-</c>。
     /// <para>
     /// 中文目录名会压成空串——这是有意的：<c>/s/视频</c> 在 URL 里要百分号编码，

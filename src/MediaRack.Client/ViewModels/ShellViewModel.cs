@@ -17,7 +17,7 @@ public interface ISessionHost
     void Activate(SourceSession session);
     void RequestAddSource();
 
-    /// <summary>编辑某个已连着的源：进连接页并预填它的四栏，改完重连即替换这个会话。</summary>
+    /// <summary>编辑某个已连着的源：进连接页并预填它的地址与令牌，改完重连即替换这个会话。</summary>
     void RequestEditSource(SourceSession session);
 
     /// <summary>把某个源从会话池移除（断开）。配置保留，连接页还能重连。</summary>
@@ -214,7 +214,7 @@ public sealed class ShellViewModel : ViewModelBase, ISessionHost
     // ── 连接页 ─────────────────────────────────────────────────────
 
     /// <summary>打开连接页。已连着的源<b>不释放</b>——关掉覆盖层就回到原来的墙。</summary>
-    /// <param name="editing">非空 = 从某个源点「改」进来的，四栏预填成它的值。</param>
+    /// <param name="editing">非空 = 从某个源点「改」进来的，地址框与令牌预填成它的值。</param>
     private void ShowConnect(string? notice = null, bool isError = false, SourceSession? editing = null) => OnUi(() =>
     {
         IsDrawerOpen = false;

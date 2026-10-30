@@ -427,6 +427,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "server ${server.name} live fetch failed, trying cache: ${e.message}")
+                    // 缓存兜底读得到的东西恒为 null：写入侧（ServerDao.updateSummary）没接线，
+                    // 降级已决定不做。保留读取是为了一口气能改回来，不是"它一直在默默生效"。
                     val cached = server.lastSummaryJson?.let { json ->
                         runCatching { ApiClient.JSON.decodeFromString(MediaPage.serializer(), json) }.getOrNull()
                     }
@@ -1120,9 +1122,9 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 「已下载」= 本地缓存条目（items 表里 status = ok 的行）。
      *
-     * 以前这里读的是 `downloadDao().observeDoneCount()`——那是下载任务表，
-     * 只统计"从远程源下载下来的"。手机自带的 B 站缓存走扫描器进 items 表，
-     * 在下载表里一行都没有，于是"本地缓存 3 条、已下载 0 条"这种自相矛盾的画面。
+     * 以前这里读的是下载任务表的完成数——那只统计"从远程源下载下来的"。
+     * 手机自带的 B 站缓存走扫描器进 items 表，在下载表里一行都没有，
+     * 于是"本地缓存 3 条、已下载 0 条"这种自相矛盾的画面。
      * 用户视角只有一个库，两个口径必须合成一个。
      */
     val stats: Flow<Stats> = combine(

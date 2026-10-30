@@ -80,8 +80,6 @@ public sealed partial class HomeViewModel
 
     public bool ShowFavoriteTools => IsInFavorite && !IsRenamingFavorite && !ConfirmDeleteFavorite;
 
-    public string CurrentFavoriteName => _nav?.Title ?? "";
-
     public bool IsCreatingFavorite
     {
         get => _isCreatingFavorite;

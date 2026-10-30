@@ -7,10 +7,9 @@ using System.Text.Json.Serialization;
 namespace MediaRack.Client.Remote;
 
 /// <summary>服务端返回了非 2xx。Code 给程序判断，Message 给人看（契约 Error schema，可直接上屏）。</summary>
-public sealed class ApiException(int httpStatus, string code, string message)
+public sealed class ApiException(string code, string message)
     : Exception(message)
 {
-    public int HttpStatus { get; } = httpStatus;
     public string Code { get; } = code;
 }
 
@@ -105,7 +104,6 @@ public sealed class ApiClient : IDisposable
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var err = TryParse<ErrorBody>(body);
             throw new ApiException(
-                (int)resp.StatusCode,
                 err?.Code is { Length: > 0 } c ? c : "http_" + (int)resp.StatusCode,
                 err?.Message is { Length: > 0 } m ? m : $"HTTP {(int)resp.StatusCode}");
         }
@@ -117,14 +115,14 @@ public sealed class ApiClient : IDisposable
         using var resp = await SendAsync(Request(HttpMethod.Get, path), ct).ConfigureAwait(false);
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         return TryParse<T>(body)
-               ?? throw new ApiException(200, "bad_response", "服务端返回内容无法解析");
+               ?? throw new ApiException("bad_response", "服务端返回内容无法解析");
     }
 
     private async Task<T> WriteJson<T>(HttpMethod method, string path, object? body, CancellationToken ct) where T : class
     {
         using var resp = await SendAsync(JsonBody(Request(method, path), body), ct).ConfigureAwait(false);
         var s = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        return TryParse<T>(s) ?? throw new ApiException(200, "bad_response", "服务端返回内容无法解析");
+        return TryParse<T>(s) ?? throw new ApiException("bad_response", "服务端返回内容无法解析");
     }
 
     private async Task WriteVoid(HttpMethod method, string path, object? body, CancellationToken ct)
@@ -252,9 +250,6 @@ public sealed class ApiClient : IDisposable
         WriteJson<ChangeCountDto>(HttpMethod.Post, "/api/v1/favorites/" + Enc(id) + "/items",
             new FavoriteItemsPatch { Add = add, Remove = remove }, ct);
 
-    public Task<List<RemoteCollectionDto>> FavoriteCollectionsAsync(string id, CancellationToken ct = default) =>
-        GetJson<List<RemoteCollectionDto>>("/api/v1/favorites/" + Enc(id) + "/collections", ct);
-
     /// <summary>
     /// 这一条属于哪些收藏夹。详情侧栏的「收藏到」要把每个夹子的勾选状态一次画全，
     /// 没有这个端点就得为每个收藏夹各翻一遍列表（N 次分页请求）。
@@ -291,9 +286,6 @@ public sealed class ApiClient : IDisposable
         if (Token is null) return url;
         return url + (url.Contains('?') ? "&" : "?") + "token=" + Uri.EscapeDataString(Token);
     }
-
-    public string ThumbUrl(string source, string key) =>
-        MediaUrl($"/media/{Enc(source)}/{Enc(key)}/thumb.jpg");
 
     /// <summary>单流地址：single + delivery 含 direct。</summary>
     public string? SingleStreamUrl(MediaDetailDto detail)
@@ -388,17 +380,6 @@ public sealed class ApiClient : IDisposable
         s.Length is > 0 and <= 32 &&
         (char.IsAsciiLetterLower(s[0]) || char.IsAsciiDigit(s[0])) &&
         s.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c is '-' or '_');
-
-    /// <summary>拼源门户 base URL：<c>http://host:port/s/{slug}</c>（或原样路径前缀）。</summary>
-    public static string? BuildSourceBaseUrl(string host, string port, string sourcePath)
-    {
-        var h = host.Trim();
-        var p = port.Trim();
-        var s = sourcePath.Trim();
-        if (h.Length == 0 || p.Length == 0 || s.Length == 0) return null;
-        var path = s.StartsWith('/') ? s.TrimEnd('/') : "/s/" + s;
-        return NormalizeBaseUrl($"{h}:{p}{path}");
-    }
 
     /// <summary>
     /// 拆 base URL → (host, port, 源地址路径，带前导 <c>/</c>)。

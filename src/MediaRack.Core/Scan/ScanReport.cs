@@ -19,8 +19,6 @@ public sealed class ScanReport
 
     public TimeSpan Elapsed { get; set; }
 
-    public int Upserted { get; set; }
-
     /// <summary>本次扫描未出现、已被标记为 missing 的既有条目数。</summary>
     public int MarkedMissing { get; set; }
 

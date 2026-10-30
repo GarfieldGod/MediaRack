@@ -3,8 +3,9 @@ using MediaRack.Library;
 namespace MediaRack.Server.Hosting;
 
 /// <summary>
-/// 服务端配置。全部可从 <c>appsettings.json</c> 的 <c>MediaRack</c> 节读取，
-/// 其中 <c>--meta</c> 与 <c>--token</c> 支持命令行覆盖（命令行优先）。
+/// 服务端配置。来源三档：<c>config.json</c>（桌面壳写的）、环境变量 <c>MediaRack__Xxx</c>、
+/// 命令行（<c>--meta</c> / <c>--token</c>）。程序自身不带 appsettings.json——单文件发布下
+/// 它只会变成"旁边那个用户不该改、也改不对的文件"。
 /// </summary>
 public sealed record ServerOptions
 {
@@ -46,17 +47,18 @@ public sealed record ServerOptions
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MediaRack");
 
     /// <summary>
-    /// 解析配置。优先级：命令行 &gt; <c>config.json</c> &gt; <c>appsettings.json</c> &gt; 内置默认。
+    /// 解析配置。优先级：命令行 &gt; <c>config.json</c> &gt; 配置系统（环境变量 / 启动参数里的
+    /// <c>MediaRack</c> 节）&gt; 内置默认。
     /// <para>
     /// 命令行排第一是因为它专用于"这次先这么跑"，覆盖文件是它的本分；
-    /// config.json 排在 appsettings 之前，是因为 appsettings 随程序发布、用户不该去改它。
+    /// config.json 排在配置系统之前，是因为前者是用户在设置页点出来的，后者是运维手段。
     /// </para>
     /// </summary>
     public static ServerOptions From(IConfiguration config, string[] args, MediaRackConfig? fileConfig = null)
     {
         var section = config.GetSection("MediaRack");
 
-        // 空串与"没配"等价：appsettings 里留一个空字符串比删掉整行更常见，
+        // 空串与"没配"等价：配置文件里留一个空字符串比删掉整行更常见，
         // 直接 Path.GetFullPath("") 会把库建到当前工作目录，那是最坏的结果。
         var metaRoot = ArgValue(args, "--meta");
         if (string.IsNullOrWhiteSpace(metaRoot)) metaRoot = fileConfig?.MetaRoot;

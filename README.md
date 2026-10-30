@@ -160,9 +160,9 @@ scripts/devtools/android-push-samples.sh                 # --dry-run 可先看�
 
 - **本地源根是内部存储** `files/sources`。不能用外部 `Android/data`：Android 16 / ColorOS 会把
   adb 创建的文件归属 shell uid，应用自己都看不见
-- **远程源**：源页「服务器」Tab → 手输地址或**扫配对二维码**（管理台「配对手机」按钮）→
+- **远程源**：源页「服务器」Tab → 手输地址或**扫配对二维码**（管理台「配对二维码」按钮）→
   浏览聚合库 → single 源直连、**dual 源客户端合成**（`MergingMediaSource`）
-- 服务器不可达时条目**变灰不消失**（缓存降级）
+- 源即入口：收藏夹跟着源走，源连不上就等于这个源没有内容可浏览（不做「变灰保留」的离线降级）
 - **下载到本地**：条目行尾 ⬇，断点续传；仅 Wi-Fi（流量网络自动挂起 + 常显提示，可会话级放行）；
   落盘布局与 PC 缓存逐字段对齐，目录拷到 PC 可直接当源扫描；播放**本地优先、远程兜底**
 
@@ -176,7 +176,7 @@ scripts/devtools/android-push-samples.sh                 # --dry-run 可先看�
   没有它就只有服务端根，而根是管理页通道，客户端不认（一次列出全部源等于把源级隔离作废）。
   框里认不出的形态会当场用红字说差什么（比如"只有服务器，缺源标识"）。
   配对二维码的内容也粘这里——桌面没有摄像头，扫码换成粘贴；码里有多个候选地址时自动挑一个能连上的。
-  手机那边仍是四栏（软键盘各有键盘类型、主路径是扫码），字段与 PC 同一组。
+  手机那边是四个必填栏 + 选填名称（软键盘各有键盘类型、主路径是扫码），字段与 PC 同一组。
 - **骨架与手机同一副**：顶栏 ☰ 展开左抽屉（源 / 浏览 / 收藏夹）→ 点「＋ 添加源」弹出连接层；右端 👤 进「我的」
   （四宫格统计 / 继续观看 / 收藏入口）。一个源都没连上时就是一张空海报墙，不会先甩一个连接页。
 - 可以同时连着多个源，抽屉里逐个列出、点一下切换，换源不必断开重连；行尾「改」「✕」分别对应编辑与断开。
@@ -185,10 +185,11 @@ scripts/devtools/android-push-samples.sh                 # --dry-run 可先看�
 
 ```bash
 dotnet run --project src/MediaRack.Client
-dotnet bin/Debug/net10.0/MediaRack.Client.dll --selftest [baseUrl]              # 协议层自检
-dotnet bin/Debug/net10.0/MediaRack.Client.dll --playtest [baseUrl]              # 播放链路自检
-dotnet bin/Debug/net10.0/MediaRack.Client.dll --connecttest <源门户地址> [令牌]  # 连接页自检
-dotnet bin/Debug/net10.0/MediaRack.Client.dll --shelltest                       # 外壳骨架自检（不联网）
+dotnet bin/Debug/net10.0/MediaRack-Client.dll --selftest [baseUrl]              # 协议层自检
+dotnet bin/Debug/net10.0/MediaRack-Client.dll --playtest [baseUrl]              # 播放链路自检
+dotnet bin/Debug/net10.0/MediaRack-Client.dll --vmtest                          # 视图模型自检（不联网）
+dotnet bin/Debug/net10.0/MediaRack-Client.dll --connecttest <源门户地址> [令牌]  # 连接页自检
+dotnet bin/Debug/net10.0/MediaRack-Client.dll --shelltest                       # 外壳骨架自检（不联网）
 ```
 
 连接配置在 `%LOCALAPPDATA%\MediaRack\client-servers.json`，日志在 `logs/client.log`。
@@ -197,8 +198,8 @@ dotnet bin/Debug/net10.0/MediaRack.Client.dll --shelltest                       
 ## 校验
 
 ```bash
-dotnet test MediaRack.sln                        # 221 项（Core/CLI 117 + Server 104）
-python scripts/check/check_contract.py           # 契约自检：27 端点、$ref 全解析（需 pyyaml）
+dotnet test MediaRack.sln                        # 227 项（Core/CLI 118 + Server 109）
+python scripts/check/check_contract.py           # 契约自检：$ref 全解析 + 代码路由逐条对账（需 pyyaml）
 python scripts/check/check_hygiene.py            # 文档与注释卫生：真机路径、内部编号、死链
 python scripts/check/e2e_smoke.py --base http://127.0.0.1:8080 --root <视频目录> --source bili
 ```
@@ -233,7 +234,7 @@ Directory.Packages.props       NuGet 版本集中在此（CPM），csproj 只写
 ## 状态
 
 三端可用：PC 客户端、Android 客户端、服务端 + Web 管理台。已完成：双流/单流扫描、
-播放交付（直读 / remux）、虚拟元数据与收藏、服务端合集、网络源与断网降级、
-手动下载到本地（断点续传 + Wi-Fi 闸门）。未做：转码、公网中继。
+播放交付（直读 / remux）、虚拟元数据与收藏、服务端合集、网络源与配对、
+手动下载到本地（断点续传 + Wi-Fi 闸门）。未做：转码、公网中继、离线降级（源即入口，见上）。
 
-验收基线：`dotnet build` 0 warning / 0 error，`dotnet test` 221 项全过，契约 27 端点自检通过。
+验收基线：`dotnet build` 0 warning / 0 error，`dotnet test` 227 项全过，契约 34 路径 / 42 方法与代码逐条对齐。
