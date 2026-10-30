@@ -1,0 +1,186 @@
+# 每次推 main 就构建四件产物并发一个 Release。
+#
+# 为什么全在一个 job 里、而且跑在 windows-latest：
+#   桌面壳（MediaRack.Server.Desktop）是 net10.0-windows + WinForms + WPF，**只能在 Windows 上构建**
+#   （NETSDK1100）。既然必然有一台 Windows 机器，其余三件就没必要再拆到别的 runner 上去——
+#   拆开只会多三次 checkout、三次 setup，还要在 job 之间传 300 MB 的产物。
+#
+# 产物与发布方式（与 build.sh 同一套名字）：
+#   MediaRack-Server-Desktop-Windows-x64/MediaRack-Server-Desktop.exe  单文件  -> 直接发文件
+#   MediaRack-Server-Windows-x64/MediaRack-Server.exe                  单文件  -> 直接发文件
+#   MediaRack-Client-Android/MediaRack-Client.apk                      单文件  -> 直接发文件
+#   MediaRack-Client-Windows-x64.zip (exe + libvlc/)                   多文件  -> 只能发 zip
+#   「单文件」这件事是有代价的：服务端的 appsettings.json 已经编进程序集、说明文字也不进包，
+#   否则一个 exe 拿不走。详见 MediaRack.Server.csproj 与 scripts/release/publish.sh。
+#
+# 版本号：v<YYYY.MM.DD>.<run_number>。三端各自的 <Version> 互不相干（client 0.1.0 / server 1.0.0 /
+# android 0.7.0-feed），硬凑一个语义化版本只会显得像在撒谎，所以用"日期 + 构建序"标记流水产物，
+# 真正的语义化版本等哪天真要发 1.0 时再打 tag。
+
+name: release
+
+on:
+  push:
+    branches: [main]
+  # 手动补一次构建：改了 runner、想重发、或 CI 配置本身在调的时候用。
+  workflow_dispatch:
+
+# gh release create 要写 Releases，默认的只读 token 不够。
+permissions:
+  contents: write
+
+# 连推两次 main 时，前一次没跑完就别发版了——同一时刻只允许一条发布流水线。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  release:
+    name: 构建 + 发布
+    runs-on: windows-latest
+
+    steps:
+      - name: 取源码
+        uses: actions/checkout@v4
+
+      - name: 装 .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          # 包版本全部钉在 Directory.Packages.props（中央包管理），拿它算缓存键就够了。
+          cache: true
+          cache-dependency-path: Directory.Packages.props
+
+      - name: 装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Gradle wrapper 每次都要重新下 8.10.2（约 130 MB），缓存下来能省一分多钟。
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('src/MediaRack.Android/gradle/wrapper/gradle-wrapper.properties', 'src/MediaRack.Android/**/*.gradle') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # local.properties 是 .gitignore 掉的（开发机上指向自己的 SDK），CI 靠 runner 预装的
+      # Android SDK。AGP 认 ANDROID_HOME / ANDROID_SDK_ROOT 这两个环境变量，所以不用生成文件；
+      # 但要是镜像哪天变了、两个都没了，直接在这里停住比让 gradle 猜要清楚得多。
+      - name: 确认 Android SDK
+        shell: bash
+        run: |
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$sdk" ] || [ ! -d "$sdk" ]; then
+            echo "runner 上找不到 Android SDK（ANDROID_HOME/ANDROID_SDK_ROOT 都不可用）" >&2
+            exit 1
+          fi
+          echo "Android SDK: $sdk"
+          # compileSdk 35 缺失时 AGP 会自己下（licenses 已在镜像里接受过），先看一眼省一趟弯路。
+          ls "$sdk/platforms" || true
+
+      - name: 跑测试
+        run: dotnet test MediaRack.sln -c Release --nologo --logger "console;verbosity=minimal"
+
+      # build.sh 就是本地那一套，一行没改：不为了 CI 另写一份 dotnet publish 参数，
+      # 否则"本地发得出来、CI 发不出来"这种分叉迟早出现。
+      - name: 构建四件产物
+        shell: bash
+        # 显式 bash 调用：git 不记录可执行位，直接 ./build.sh 依赖 MSYS 把文件当可执行，
+        # 换 runner / 换挂载选项就可能变成 "Permission denied"。
+        run: bash ./build.sh
+
+      # publish.sh 在旧目录删不掉时会降级到 <名字>-<时间戳>/ 继续，这在 CI 上不该发生
+      # （没人占着 exe），但真发生了下面按固定路径取文件就会失败——所以先显式核对一遍，
+      # 免得把一个"看起来发成功了、其实附件是上一次的"版本推出去。
+      - name: 校验产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          check() {
+            if [ -f "$1" ]; then
+              printf '  %-56s %s\n' "$1" "$(du -h "$1" | cut -f1)"
+            else
+              echo "  缺少 $1" >&2
+              missing=1
+            fi
+          }
+          check publish/MediaRack-Server-Desktop-Windows-x64/MediaRack-Server-Desktop.exe
+          check publish/MediaRack-Server-Windows-x64/MediaRack-Server.exe
+          check publish/MediaRack-Client-Android/MediaRack-Client.apk
+          check publish/MediaRack-Client-Windows-x64.zip
+          [ "$missing" = 0 ] || {
+            echo "产物不全，publish/ 里实际有：" >&2
+            ls -1 publish >&2
+            exit 1
+          }
+          # 客户端 zip 里必须有 libvlc/，否则发出去的是个能开、不能播的包。
+          if command -v unzip >/dev/null 2>&1; then
+            unzip -l publish/MediaRack-Client-Windows-x64.zip | grep -q 'libvlc/' || {
+              echo "客户端 zip 里没有 libvlc/ —— 播放会不可用，拒绝发布" >&2
+              exit 1
+            }
+          fi
+
+      - name: 发布
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v$(date +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          echo "版本：$TAG"
+
+          # 重跑同一条 workflow 时 tag 已经存在，删了重发，别在重跑上失败。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+
+          cat > /tmp/notes.md <<'EOF'
+          ### 产物
+
+          | 文件 | 说明 |
+          |---|---|
+          | `MediaRack-Server-Desktop.exe` | **推荐入口**。托盘 + 配置向导 + 服务端同进程，单个 exe 双击即用 |
+          | `MediaRack-Server.exe` | 无界面服务端：NAS / 服务器 / 只要 HTTP 管理台 |
+          | `MediaRack-Client.exe`（在 zip 里） | Windows 客户端，Avalonia + libvlc |
+          | `MediaRack-Client.apk` | Android 客户端，debug 签名，可直接覆盖升级 |
+
+          ### 怎么用
+
+          - **桌面壳**：双击 `MediaRack-Server-Desktop.exe`。首次运行弹出配置向导（库目录 / 端口 / 源文件夹），
+            保存后常驻系统托盘。管理页只对本机开放（别的机器打开根路径会 403），局域网请走 `/s/<源地址>/`。
+          - **服务端**：`MediaRack-Server.exe --meta <库目录> --urls http://0.0.0.0:8080 --open`。
+            不写 `--urls` 只有本机能访问。配置也可以用同目录的 `mediarack.config.json`（便携部署）。
+          - **Windows 客户端**：zip **整个解压**（`MediaRack-Client.exe` 和 `libvlc/` 缺一不可，少了解压出来的
+            libvlc 只能浏览不能播放）。连接页粘管理页「访问方式」里那一整行源地址即可，令牌另填或随链接带入。
+          - **Android**：`adb install -r MediaRack-Client.apk`，或把 apk 拷进手机点开安装。
+
+          客户端一条配置只连一个源（`/s/{slug}`）。服务端根路径是管理页通道，客户端不认——一次列出全部源
+          等于把源级隔离作废。
+
+          ### 构建信息
+
+          - 提交：`@@SHA@@`
+          - 分支：`@@REF@@`
+          - 触发：@@EVENT@@
+          EOF
+
+          sed -i "s/@@SHA@@/${GITHUB_SHA:0:7}/; s|@@REF@@|${GITHUB_REF_NAME}|; s/@@EVENT@@/${GITHUB_EVENT_NAME}/" /tmp/notes.md
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file /tmp/notes.md \
+            "publish/MediaRack-Server-Desktop-Windows-x64/MediaRack-Server-Desktop.exe" \
+            "publish/MediaRack-Server-Windows-x64/MediaRack-Server.exe" \
+            "publish/MediaRack-Client-Windows-x64.zip" \
+            "publish/MediaRack-Client-Android/MediaRack-Client.apk"

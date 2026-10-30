@@ -8,12 +8,13 @@
 #   ./build.sh android            # 只发 Android APK
 #   ./build.sh android desktop    # 可以给多个，按给出的顺序执行
 #
-# 产物都落在 publish/：
-#   MediaRack-win-x64/          MediaRack.exe          桌面壳：托盘 + 配置向导 + 服务端跑在同一进程
-#   MediaRack.Client-win-x64/   MediaRack.Client.exe   Windows 客户端：Avalonia + libvlc（+ libvlc/ 目录）
-#   MediaRack-server-win-x64/   mediarack-server.exe   无界面服务端：给 NAS / 服务器 / 只跑服务的人
-#   MediaRack-android/          MediaRack-<ver>.apk    Android 客户端（debug 签名，可侧载覆盖升级）
-#   同名的 .zip 是拷贝分发用的（APK 本身已经是压缩包，不套 zip）。
+# 产物都落在 publish/，**文件夹名与里面的 exe 同名同大小写**（一套四件，一眼能对上）：
+#   MediaRack-Server-Desktop-Windows-x64/  MediaRack-Server-Desktop.exe  托盘 + 配置向导 + 服务端同进程
+#   MediaRack-Client-Windows-x64/          MediaRack-Client.exe          Avalonia + libvlc（+ libvlc/ 目录）
+#   MediaRack-Server-Windows-x64/          MediaRack-Server.exe          无界面服务端：给 NAS / 服务器
+#   MediaRack-Client-Android/              MediaRack-Client.apk          手机客户端（debug 签名，可覆盖升级）
+# 除客户端外都是**单文件**（客户端必须带 libvlc/），所以只有客户端出 zip，其余直接给 exe/apk。
+# 包里不放使用说明.txt：说明文字只在 README 与发布页正文里，避免两份文档互相矛盾。
 #
 # 实现不在这里：
 #   桌面 / 客户端 / 服务端 -> scripts/release/publish.sh（唯一实现，纯 bash + dotnet CLI，跨平台）
@@ -51,10 +52,12 @@ for t in "${TARGETS[@]}"; do
     esac
     echo "────────────────────────────────────────────────────"
 
+    # 只有客户端需要打 zip：单个 exe 再套一层压缩纯属多一道解压步骤，
+    # 发布页上直接给 exe 更像"双击就能用"。
     case "$t" in
-        desktop) bash scripts/release/publish.sh --app desktop --zip --output publish/MediaRack-win-x64 ;;
-        client)  bash scripts/release/publish.sh --app client  --zip --output publish/MediaRack.Client-win-x64 ;;
-        server)  bash scripts/release/publish.sh --app server  --zip --runtime win-x64 --output publish/MediaRack-server-win-x64 ;;
+        desktop) bash scripts/release/publish.sh --app desktop --output publish/MediaRack-Server-Desktop-Windows-x64 ;;
+        client)  bash scripts/release/publish.sh --app client  --zip --output publish/MediaRack-Client-Windows-x64 ;;
+        server)  bash scripts/release/publish.sh --app server  --runtime win-x64 --output publish/MediaRack-Server-Windows-x64 ;;
         android) bash scripts/release/publish-android.sh ;;
     esac
 
@@ -75,6 +78,9 @@ done
 
 echo
 echo "用法："
-echo "  Windows：把 MediaRack-win-x64.zip 解压到任意电脑，双击 MediaRack.exe；"
-echo "           客户端解压后整个目录一起用（exe + libvlc/ 缺一不可）。"
-echo "  手机  ：adb install -r publish/MediaRack-android/*.apk，或把 apk 拷进手机点开安装。"
+echo "  桌面壳：拿 publish/MediaRack-Server-Desktop-Windows-x64/MediaRack-Server-Desktop.exe，"
+echo "          单个 exe 双击即用（配置与库在 %LOCALAPPDATA%\\MediaRack）。"
+echo "  服务端：拿 publish/MediaRack-Server-Windows-x64/MediaRack-Server.exe，同样单文件。"
+echo "  客户端：publish/MediaRack-Client-Windows-x64/ 整个目录一起拷（exe + libvlc/ 缺一不可），"
+echo "          发布用那份 zip 就是整个目录。"
+echo "  手机  ：adb install -r publish/MediaRack-Client-Android/MediaRack-Client.apk，或拷进手机点开安装。"

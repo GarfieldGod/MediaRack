@@ -71,17 +71,26 @@ mrack verify-readonly --source bili --hash
 ./build.sh android desktop    # 也可以给多个，按顺序执行
 ```
 
+**文件夹名 = 里面那个 exe 的名字**（大小写、连字符都对齐），拿到哪个目录就知道该双击什么：
+
 | 产物 | 文件 | 给谁用 |
 |---|---|---|
-| **桌面壳** | `publish/MediaRack-win-x64/MediaRack.exe` + zip（85 MB / 80 MB） | **推荐入口**：托盘 + 配置向导 + 服务端同进程 |
-| Windows 客户端 | `publish/MediaRack.Client-win-x64/`（exe + `libvlc/`，zip 91 MB） | 桌面播放器（Avalonia + libvlc） |
-| 服务端 | `publish/MediaRack-server-win-x64/mediarack-server.exe` + zip | 无界面：NAS / 服务器 / 只要 HTTP 管理台 |
-| Android | `publish/MediaRack-android/MediaRack-<version>.apk` | 手机客户端，`adb install -r` 或拷进手机点开 |
+| **桌面壳** | `publish/MediaRack-Server-Desktop-Windows-x64/MediaRack-Server-Desktop.exe`（85 MB） | **推荐入口**：托盘 + 配置向导 + 服务端同进程 |
+| Windows 客户端 | `publish/MediaRack-Client-Windows-x64/`（`MediaRack-Client.exe` + `libvlc/`，另有同名 zip 91 MB） | 桌面播放器（Avalonia + libvlc） |
+| 服务端 | `publish/MediaRack-Server-Windows-x64/MediaRack-Server.exe`（49 MB） | 无界面：NAS / 服务器 / 只要 HTTP 管理台 |
+| Android | `publish/MediaRack-Client-Android/MediaRack-Client.apk` | 手机客户端，`adb install -r` 或拷进手机点开 |
 
-- Windows 三个包都是**自包含单文件 + 扁平 zip**：解压后根目录就是 exe，拷到任意 Windows 电脑双击即可，
-  目标机不需要装 .NET
-- 客户端必须**整目录**一起用——`libvlc/` 是被本机加载的 dll，塞不进单文件
+- 除客户端外都是**真正的单文件**：目录里只有那一个 exe，拷到任意 Windows 电脑双击即可，目标机不用装 .NET。
+  `appsettings.json` 为此被删掉了（其中的值都已落在 `ServerOptions` 的代码默认值里，日志过滤搬进
+  `MediaRackHost.Compose`）；要改配置用 `mediarack.config.json` 或环境变量。
+- 客户端必须**整目录**一起用——`libvlc/` 是被本机加载的 dll，塞不进单文件，所以只有它出 zip
+- 包里**不放**使用说明.txt：说明文字只在 README 与发布页正文里，免得两份文档互相矛盾
 - APK 是 **debug 签名**，与开发期 adb 装的包同一证书，可 `-r` 覆盖升级（release 需要 keystore，密钥不进仓库）
+- APK 文件名不带版本号（版本打在发布页 tag 上）：下载、侧载、CI 上传三处只记一个名字
+
+**推 main 就自动出这一套**：`.github/workflows/release.yml` 在 `windows-latest` 上跑 `dotnet test` +
+`./build.sh`，然后建一个 `v<YYYY.MM.DD>.<构建序>` 的 Release：单文件那三项直接发文件，客户端发 zip。
+没有 GitHub remote 时它不会跑；本地构建照旧 `./build.sh`。
 - 前提：bash（Windows 上用 Git Bash）+ dotnet 10；Android 另需 JDK 21 与 Android SDK
   （在 `src/MediaRack.Android/local.properties` 里写 `sdk.dir`；该文件按机器而异，不入库）
 
@@ -100,7 +109,7 @@ mrack verify-readonly --source bili --hash
 页面是编译进程序集的（`wwwroot` 三个文件），发布后**只拷 exe 也能用**。
 
 ```bash
-mediarack-server.exe --meta <库目录> --urls http://0.0.0.0:8080 --open
+MediaRack-Server.exe --meta <库目录> --urls http://0.0.0.0:8080 --open
 ```
 
 | 参数 | 说明 |
@@ -139,8 +148,8 @@ Cookie（浏览器自己发的图片与视频请求加不了头）、`?token=`�
 ## Android 端
 
 ```bash
-./build.sh android                              # → publish/MediaRack-android/*.apk
-adb install -r publish/MediaRack-android/*.apk
+./build.sh android                              # → publish/MediaRack-Client-Android/MediaRack-Client.apk
+adb install -r publish/MediaRack-Client-Android/MediaRack-Client.apk
 
 # 手动构建（仓库自带 Gradle wrapper，不要求本机装 gradle）
 (cd src/MediaRack.Android && ./gradlew assembleDebug)
@@ -210,7 +219,7 @@ Directory.Packages.props       NuGet 版本集中在此（CPM），csproj 只写
 │   ├── MediaRack.Server/      Minimal API、Range 流、remux、内嵌 Web 页（wwwroot/）
 │   ├── MediaRack.Cli/         mrack 运维命令行（直接读库，不经 HTTP）
 │   ├── MediaRack.Client/      PC 客户端（Avalonia + libvlc）
-│   ├── MediaRack.Server.Desktop/  MediaRack.exe（托盘壳 + 内嵌 Kestrel）
+│   ├── MediaRack.Server.Desktop/  MediaRack-Server-Desktop.exe（托盘壳 + 内嵌 Kestrel）
 │   └── MediaRack.Android/     Android 客户端（Kotlin + Compose + Room + Media3）
 ├── tests/                     MediaRack.Tests / MediaRack.Server.Tests
 ├── contracts/openapi.v1.yaml  三端唯一契约源

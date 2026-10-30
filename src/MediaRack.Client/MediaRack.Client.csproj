@@ -7,7 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RootNamespace>MediaRack.Client</RootNamespace>
-    <AssemblyName>MediaRack.Client</AssemblyName>
+    <!--
+      产物名要跟发布目录同名同大小写：publish/MediaRack-Client-Windows-x64/MediaRack-Client.exe。
+      原来叫 MediaRack.Client.exe（点号），和文件夹的连字符对不上，下载下来一眼看不出是一对。
+      RootNamespace 保持 MediaRack.Client 不动 —— 命名空间是代码组织，跟交付物名字是两回事。
+    -->
+    <AssemblyName>MediaRack-Client</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Version>0.1.0</Version>
     <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>

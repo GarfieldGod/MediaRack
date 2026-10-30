@@ -5,7 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>1.0.0</Version>
-    <AssemblyName>mediarack-server</AssemblyName>
+    <!--
+      产物名与发布目录对齐：MediaRack-Server.exe 落在 MediaRack-Server-Windows-x64/。
+      原来是全小写 mediarack-server，跟同一批产物的 MediaRack-* 排在一起像两个项目的东西。
+    -->
+    <AssemblyName>MediaRack-Server</AssemblyName>
     <RootNamespace>MediaRack.Server</RootNamespace>
   </PropertyGroup>
 
@@ -28,11 +32,20 @@
   </ItemGroup>
 
   <!--
-    Development 配置不跟着发布走：单文件交付里出现一个 appsettings.Development.json，
-    下一个人会以为要改它。生产配置就 appsettings.json 一份。
+    [没有 appsettings.json，这是故意的]
+
+    交付物必须**只有一个 exe**（publish/MediaRack-Server-Windows-x64/MediaRack-Server.exe），
+    而 appsettings.json 作为 Content 会原样落在 exe 旁边，一个 exe 就拿不走了。
+
+    它原先装的东西各有归宿：
+      · Logging 的两条过滤 -> MediaRackHost.Compose 里一句 AddFilter（本来就只影响日志噪音）
+      · MediaRack 节的四个键 -> ServerOptions 的代码默认值，逐项对齐过
+        （MetaRoot 空 = %LOCALAPPDATA%\MediaRack，ExportBudgetBytes = 20 GiB，
+          PosterWidth = 560，Token 空 = 不鉴权）
+      · AllowedHosts: "*" -> 不是配置就等于不过滤，等价
+
+    要临时改级别/预算，走环境变量（Logging__LogLevel__Default、MediaRack__ExportBudgetBytes），
+    或者放一个 mediarack.config.json 做便携覆盖——那两种都不是"随手能改坏的默认值"。
   -->
-  <ItemGroup>
-    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
-  </ItemGroup>
 
 </Project>

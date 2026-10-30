@@ -11,7 +11,7 @@ using Microsoft.AspNetCore.Hosting;
 namespace MediaRack.Server.Hosting;
 
 /// <summary>
-/// 把整个 HTTP 管线装起来。两个入口共用：命令行（<c>mediarack-server</c>）与桌面托盘壳（<c>MediaRack.Server.Desktop</c>）。
+/// 把整个 HTTP 管线装起来。两个入口共用：命令行（<c>MediaRack-Server</c>）与桌面托盘壳（<c>MediaRack-Server-Desktop</c>）。
 /// <para>
 /// 抽出来的理由不是"复用几行代码"，而是<b>两个入口必须跑在同一条管线上</b>——
 /// 桌面壳里点"重新扫描"和命令行里打 <c>--scan</c>，走的必须是同一段逻辑，
@@ -20,7 +20,7 @@ namespace MediaRack.Server.Hosting;
 /// </summary>
 public static class MediaRackHost
 {
-    /// <summary>命令行入口。配置来自 <c>appsettings.json</c> + 命令行参数 + <c>config.json</c>。</summary>
+    /// <summary>命令行入口。配置来自命令行参数与 <c>config.json</c>（没有 appsettings.json，见 csproj 注释）。</summary>
     public static WebApplication Build(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
@@ -82,6 +82,13 @@ public static class MediaRackHost
     private static WebApplication Compose(
         WebApplicationBuilder builder, ServerOptions options, ServiceCatalog catalog)
     {
+        // 框架自己的 Info 级日志每来个请求就要写一行，对"看自己的库在干什么"毫无帮助，
+        // 而 ASP.NET 默认就是 Information。这一句原先写在 appsettings.json 里；
+        // 那份 json 为了「交付物只有一个 exe」被删了（见 MediaRack.Server.csproj），
+        // 于是把唯一真正起作用的这一条搬进代码。
+        // 想临时看框架日志：Logging__LogLevel__Default=Debug。
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(catalog);
 

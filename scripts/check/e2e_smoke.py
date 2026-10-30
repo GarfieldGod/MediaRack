@@ -7,7 +7,7 @@ MediaRack 端到端验收脚本。
 
 用法:
     # 1. 先起服务
-    src/MediaRack.Server/bin/Debug/net10.0/mediarack-server.exe \
+    src/MediaRack.Server/bin/Debug/net10.0/MediaRack-Server.exe \
         --meta /path/to/meta --urls http://127.0.0.1:8080
 
     # 2. 跑验收
@@ -144,7 +144,7 @@ def main() -> int:
     print("\n[0] 鉴权")
     status, _, state = call(base, "/api/v1/auth/state")
     if not record("auth/state 免鉴权可达", status == 200 and state is not None, f"HTTP {status}"):
-        print("\n服务没起来，先启动 mediarack-server。")
+        print("\n服务没起来，先启动 MediaRack-Server。")
         return 1
 
     auth_required = bool(state.get("authRequired"))
@@ -170,7 +170,7 @@ def main() -> int:
     print("\n[1] 服务与库")
     status, _, health = call(base, "/api/v1/health")
     if not record("health 可用", status == 200 and health is not None, f"HTTP {status}"):
-        print("\n服务没起来，先启动 mediarack-server。")
+        print("\n服务没起来，先启动 MediaRack-Server。")
         return 1
 
     record("健康检查报出鉴权要求", health.get("authRequired") == auth_required,

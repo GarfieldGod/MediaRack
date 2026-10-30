@@ -106,6 +106,41 @@ python scripts/check/check_hygiene.py --strict    # 警告也算失败
 `android-push-samples.sh` 之所以要 `run-as` 而不是 `adb push` 到 `Android/data`：
 新系统上 adb（shell uid）建的文件属主不对，应用自己 `File.listFiles()` 返回 null。
 
+## 交付物命名（2026-10-30 定，四处必须一致）
+
+**文件夹名 = 里面那个 exe 的名字**，大小写与连字符都一样：
+
+| 文件夹 | 产物 |
+|---|---|
+| `MediaRack-Server-Desktop-Windows-x64` | `MediaRack-Server-Desktop.exe` |
+| `MediaRack-Client-Windows-x64` | `MediaRack-Client.exe`（+ `libvlc/`） |
+| `MediaRack-Server-Windows-x64` | `MediaRack-Server.exe` |
+| `MediaRack-Client-Android` | `MediaRack-Client.apk` |
+
+这套名字由四处共同决定，改一处就得改四处：csproj 的 `<AssemblyName>`、`build.sh` 传给
+`--output` 的目录、`.github/workflows/release.yml` 里的附件路径、README 的产物表。
+
+- **改 `<AssemblyName>` 时记得 Desktop 的 `TrimPublishOutput`**：它按名字删
+  `MediaRack-Server.runtimeconfig.json` / `.deps.json`，名字对不上就会把这两个文件留在发布目录里。
+- **单文件是硬要求**：服务端与桌面壳目录里只能有一个 exe。往这两个项目加 `Content` 之前先问
+  「这会不会让一个 exe 变成两个」——`appsettings.json` 就是因此被删的（值已进代码默认值）。
+- **包里不放使用说明文件**：`使用说明.txt` 已移除，说明文字只写 README 与发布页正文。
+  同一个说明写两遍，迟早互相矛盾。
+- 客户端是唯一必须打 zip 的（`libvlc/` 塞不进单文件）；其余三项发布时直接给 exe / apk。
+
+## CI（`.github/workflows/release.yml`）
+
+push 到 main 就构建并发布四件产物，tag 是 `v<YYYY.MM.DD>.<run_number>`（三端 `<Version>` 互不相干，
+硬凑语义化版本等于撒谎）。
+
+- 只有一个 job，跑在 `windows-latest`：桌面壳是 net10.0-windows，必然要一台 Windows 机器，
+  其余三件没必要再拆去别的 runner 传 300 MB 产物。
+- **构建步骤直接调 `./build.sh`**，不要在 workflow 里另写一套 `dotnet publish` 参数——
+  否则"本地发得出来、CI 发不出来"这种分叉迟早出现。
+- 产物路径是硬编码核对的（`校验产物` 那一步）：`publish.sh` 在目录删不掉时会降级到
+  `<名字>-<时间戳>/`，CI 上真发生了就得当场失败，而不是把上一次的附件当好包发出去。
+- 客户端 zip 会检查里面有没有 `libvlc/`：没有就是个"能开不能播"的包，直接拒绝发布。
+
 ## 不算错，别乱改
 
 - 「本机」在产品语义里是对的：只对本机开放的管理页、被本机进程加载的 dll

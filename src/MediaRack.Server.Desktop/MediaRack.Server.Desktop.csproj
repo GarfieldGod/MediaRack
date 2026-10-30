@@ -17,8 +17,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>1.0.0</Version>
-    <!-- 双击的那个东西就叫 MediaRack.exe，不带 Desktop 后缀。 -->
-    <AssemblyName>MediaRack</AssemblyName>
+    <!--
+      产物名 = 发布目录名：MediaRack-Server-Desktop.exe 落在 MediaRack-Server-Desktop-Windows-x64/。
+      名字里带 Server 是因为它真的把服务端跑起来（托盘 + 配置向导 + 同进程托管 Server），
+      只叫 MediaRack.exe 反而看不出它跟「服务端」是同一个东西的两个外壳。
+      桌面快捷方式、开机自启项都是按 Environment.ProcessPath 现取的，改名不影响它们。
+    -->
+    <AssemblyName>MediaRack-Server-Desktop</AssemblyName>
     <RootNamespace>MediaRack.Server.Desktop</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
@@ -52,8 +57,8 @@
   -->
   <Target Name="TrimPublishOutput" AfterTargets="Publish">
     <ItemGroup>
-      <PublishJunk Include="$(PublishDir)mediarack-server.runtimeconfig.json" />
-      <PublishJunk Include="$(PublishDir)mediarack-server.deps.json" />
+      <PublishJunk Include="$(PublishDir)MediaRack-Server.runtimeconfig.json" />
+      <PublishJunk Include="$(PublishDir)MediaRack-Server.deps.json" />
       <PublishJunk Include="$(PublishDir)*.pdb" />
     </ItemGroup>
     <Delete Files="@(PublishJunk)" />

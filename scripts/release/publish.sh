@@ -17,8 +17,9 @@
 #
 # 用法：
 #   scripts/release/publish.sh                                  -> 服务端，按宿主平台 -> dist/<rid>/
-#   scripts/release/publish.sh --app desktop --zip --output publish/MediaRack-win-x64
-#   scripts/release/publish.sh --app client  --zip --output publish/MediaRack.Client-win-x64
+#   scripts/release/publish.sh --app desktop --zip --output publish/MediaRack-Server-Desktop-Windows-x64
+#   scripts/release/publish.sh --app client  --zip --output publish/MediaRack-Client-Windows-x64
+#   scripts/release/publish.sh --app server --zip --output publish/MediaRack-Server-Windows-x64
 #   scripts/release/publish.sh --app server --runtime linux-x64 --zip     （交叉发布，Windows 上也能出 Linux 包）
 #   scripts/release/publish.sh --help
 
@@ -38,9 +39,9 @@ usage() {
 参数：
   --app server|desktop|client
                           发布哪个程序（默认 server）
-                            server  = mediarack-server（控制台，跨平台）
-                            desktop = MediaRack.exe（Windows 托盘壳，仅 Windows）
-                            client  = MediaRack.Client（Avalonia 客户端，跨平台）
+                            server  = MediaRack-Server（控制台，跨平台）
+                            desktop = MediaRack-Server-Desktop（Windows 托盘壳，仅 Windows）
+                            client  = MediaRack-Client（Avalonia 客户端，跨平台）
   --runtime <RID>         目标运行时，如 win-x64 / linux-x64 / linux-arm64 / osx-arm64
                           缺省 = 宿主平台；--app desktop 缺省 win-x64
   --output <目录>         输出目录（缺省 dist/<rid>[-desktop|-client]）
@@ -91,17 +92,17 @@ host_rid() {
 case "$APP" in
     server)
         PROJECT="src/MediaRack.Server/MediaRack.Server.csproj"
-        EXE_BASE="mediarack-server"
+        EXE_BASE="MediaRack-Server"
         DEFAULT_OUT_SUFFIX=""
         ;;
     desktop)
         PROJECT="src/MediaRack.Server.Desktop/MediaRack.Server.Desktop.csproj"
-        EXE_BASE="MediaRack"
+        EXE_BASE="MediaRack-Server-Desktop"
         DEFAULT_OUT_SUFFIX="-desktop"
         ;;
     client)
         PROJECT="src/MediaRack.Client/MediaRack.Client.csproj"
-        EXE_BASE="MediaRack.Client"
+        EXE_BASE="MediaRack-Client"
         DEFAULT_OUT_SUFFIX="-client"
         ;;
     *)
@@ -113,7 +114,7 @@ esac
 [ -n "$RUNTIME" ] || RUNTIME=$(host_rid)
 
 # Windows 目标带 .exe，Linux/macOS 不带。这不是为了好看：zip 里多一个
-# mediarack-server.exe 会让 Linux 用户以为包发错了。
+# MediaRack-Server.exe 会让 Linux 用户以为包发错了。
 case "$RUNTIME" in
     win-*) EXE="$EXE_BASE.exe" ;;
     *)     EXE="$EXE_BASE" ;;
@@ -213,115 +214,9 @@ trim_libvlc() {
     return 0
 }
 
-# 使用说明跟着包一起发：拿到 zip 的人不该再去找文档。
-# 编码用无 BOM UTF-8 —— Windows 10 之后记事本、VS Code、cat 都认；
-# 带 BOM 反而会让 Linux 上的 cat / less 在开头显示一个乱码方块。
-write_usage() {
-    local exe=$1
-    if [ "$APP" = desktop ]; then
-        cat > "$OUTPUT/使用说明.txt" <<EOF
-MediaRack 使用说明
-==================
-
-运行
-----
-双击 $exe。首次运行弹出配置向导：
-  1. 库目录：放数据库、封面、导出产物（默认 %LOCALAPPDATA%\MediaRack）
-  2. 服务：端口（默认 8080）与密码（留空 = 不鉴权，仅限可信局域网）
-  3. 源文件夹：视频目录，可添加多个
-点「保存并启动」后自动扫描一遍源，之后常驻系统托盘。
-双击托盘图标，或右键「打开管理页」。
-
-手机配对
---------
-管理页里选中源 -> 出示二维码 -> Android 客户端扫码。
-二维码用的是浏览器当前地址：用局域网 IP 打开管理页，手机就连局域网。
-
-局域网访问
-----------
-服务监听 0.0.0.0（所有网卡），但**管理控制台（根路径 /）只接受本机访问**：
-别的电脑打开 http://<本机IP>:<端口>/ 会得到 403 loopback_only —— 这是有意设计，
-管理页不对外。局域网电脑 / 手机请走库页（带令牌）：
-  http://<本机IP>:<端口>/s/<源地址>/
-管理页里每个源的「访问方式」列出本机全部地址与配对二维码，复制即可。
-首次启动时 Windows 防火墙会弹窗，请勾选「专用网络」并允许。
-端口被占用就换一个（托盘右键 -> 配置服务...）。
-
-随身模式
---------
-exe 同目录放一个 mediarack.config.json 即可覆盖配置（便携部署）；
-不放则使用 %LOCALAPPDATA%\MediaRack\config.json。
-
-ffmpeg（可选）
---------------
-浏览器 remux 转封装、封面抽帧、single 源探测需要 ffmpeg：
-装进 PATH，或用环境变量 MEDIARACK_FFMPEG / MEDIARACK_FFPROBE 指定。
-不装也能扫描、建库、播放（Android 客户端直接解 m4s 双流）。
-
-日志：%LOCALAPPDATA%\MediaRack\logs\desktop.log
-EOF
-    elif [ "$APP" = client ]; then
-        cat > "$OUTPUT/使用说明.txt" <<EOF
-MediaRack 客户端使用说明
-========================
-
-运行
-----
-双击 $exe（Linux/macOS 的包没有 .exe 后缀，直接 ./MediaRack.Client）。
-首次启动在连接页填服务器地址 —— **填的是源库页地址，不是根地址**：
-  http://<服务器IP>:<端口>/s/<源地址>/
-（根地址 / 是服务器本机的管理控制台，别的机器打开是 403 loopback_only。）
-最省事：把管理页里那个源的配对码（MR1|... 或带 #token= 的地址）粘进连接页，
-地址与令牌一次带进来；来源就是手机端扫的那个二维码。
-
-这个目录里必须有的东西
-----------------------
-  $exe          主程序（托管代码都在里面）
-  libvlc/       播放引擎的原生库（约 $LIVLC_SIZE）
-
-libvlc 目录**不能删、不能移走**。它是被本机加载的 dll，塞不进单文件，
-所以只能跟 exe 放一起。缺了它程序照常启动、能浏览、能搜索，
-只有"播放"不可用，界面上会提示原因。
-
-ffmpeg
-------
-不需要。客户端自己用 libvlc 合成 video.m4s + audio.m4s 双流播放，
-不依赖服务端 remux，也不依赖本机装 ffmpeg。
-
-日志：%LOCALAPPDATA%\MediaRack\logs\client.log
-EOF
-    else
-        cat > "$OUTPUT/使用说明.txt" <<EOF
-MediaRack 服务端使用说明
-========================
-
-运行
-----
-chmod +x $exe            # 解压后先做这一步（原因见文末"关于可执行位"）
-./$exe --meta /srv/MediaRack --urls http://0.0.0.0:8080 --open
-  --meta   库目录（数据库、封面、导出产物）；缺省 ~/.local/share/MediaRack
-  --urls   监听地址。写 http://0.0.0.0:8080 才能被局域网访问；
-           缺省只绑 localhost:5000，那样只有本机打得开
-           （局域网打开的是库页 /s/<源地址>/；根路径 / 是管理台，只给本机，外部请求 403）
-  --open   启动后顺手打开浏览器
-  --token  访问令牌；配了之后除静态页与健康检查外都要 Bearer 鉴权
-
-管理页（http://localhost:8080）：加源、扫描、搜索、改名、标签、隐藏、收藏夹、播放。
-
-ffmpeg（可选）
---------------
-浏览器 remux 转封装、封面抽帧、single 源探测需要 ffmpeg：
-装进 PATH，或用环境变量 MEDIARACK_FFMPEG / MEDIARACK_FFPROBE 指定。
-不装也能扫描、建库、播放（Android 客户端直接解 m4s 双流）。
-
-关于可执行位
-------------
-这个包是在 Windows 上交叉发布的，NTFS 没有 unix 权限位、.NET 的 zip 也不写它，
-所以解压出来的 mediarack-server 不带 x 位，必须自己 chmod +x 一次。
-若你的解压工具保留了权限位（在 Linux 本机发布、或用 unzip），可跳过。
-EOF
-    fi
-}
+# 包里**不放**使用说明.txt（2026-10-30 定）：交付物只留能跑的东西，
+# 说明文字一律在 README 与发布页的正文里。zip 里多一个 txt，用户会以为那才是
+# 正经文档，然后它跟 README 各写一份、迟早互相矛盾。
 
 # ---- 主流程 ------------------------------------------------------------------
 echo "发布 $PROJECT"
@@ -387,8 +282,8 @@ fi
 
 # 服务端在 Linux 上要可执行。这一步在 Windows 宿主上做不出效果（NTFS 没有 unix 权限位，
 # Cygwin 的 chmod 只改模拟属性、不进 zip），所以在 Windows 上交叉发布时它基本是空操作；
-# 真正有用的是"在 Linux 本机发布"这条路径。交叉发布的包里必须靠 chmod +x，
-# 使用说明里已写明（zip 的 unix 权限位是 0，.NET 不写这一项）。
+# 真正有用的是"在 Linux 本机发布"这条路径。交叉发布出去的包必须自己 chmod +x
+# （zip 的 unix 权限位是 0，.NET 不写这一项）——这句提醒在 README 里，包里不再放说明文件。
 case "$RUNTIME" in
     win-*) : ;;
     *) chmod +x "$EXE_PATH" 2>/dev/null || true ;;
@@ -413,7 +308,6 @@ if [ "$APP" = client ]; then
 fi
 
 if [ "$DO_ZIP" = 1 ]; then
-    write_usage "$EXE"
     ZIP_PATH="$OUTPUT.zip"
     echo "打包  $ZIP_PATH"
     make_zip "$OUTPUT" "$ZIP_PATH"
@@ -441,6 +335,6 @@ if [ -n "$STALE" ] && [ -e "$STALE" ]; then
         echo "已清理降级前的旧目录 $STALE"
     else
         echo "旧目录仍被占用（多半还在被扫描），保留在原处：$STALE" >&2
-        echo "  下次发布时会自动清理；想立刻删就先退出正在运行的 MediaRack。" >&2
+        echo "  下次发布时会自动清理；想立刻删就先退出正在跑的 MediaRack-Server-Desktop。" >&2
     fi
 fi
