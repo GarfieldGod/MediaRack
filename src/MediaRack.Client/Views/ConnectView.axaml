@@ -8,7 +8,7 @@
         <Style Selector="TextBlock.field">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Margin" Value="0,8,0,2" />
+            <Setter Property="Margin" Value="0,10,0,3" />
         </Style>
         <Style Selector="TextBlock.hint">
             <Setter Property="FontSize" Value="11" />
@@ -18,55 +18,33 @@
     </UserControl.Styles>
 
     <ScrollViewer Padding="28">
-        <StackPanel Spacing="10" MaxWidth="760" HorizontalAlignment="Left">
+        <StackPanel Spacing="8" MaxWidth="760" HorizontalAlignment="Left">
 
             <TextBlock Text="连接一个源" FontSize="22" FontWeight="SemiBold" />
             <TextBlock TextWrapping="Wrap" Opacity="0.7"
-                       Text="一条配置就是一个源。四个字段与服务端管理页「访问方式」里的那张表一一对应；拿到配对二维码的话，把码里的内容粘到下方一次填满。" />
+                       Text="一条配置就是一个源。把管理页「访问方式」里那一整行（带「复制」按钮的那个）粘进来就行，地址和源标识会自己拆开；配对二维码的内容粘进来也一样，里面有好几个候选地址时会自动挑一个能连上的。" />
 
-            <!-- ═══ 四栏 ═══ -->
-            <Grid ColumnDefinitions="*,110" ColumnSpacing="10" Margin="0,6,0,0">
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="服务器地址" Classes="field" />
-                    <TextBox Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="192.0.2.10 或主机名" />
-                </StackPanel>
-                <StackPanel Grid.Column="1">
-                    <TextBlock Text="端口" Classes="field" />
-                    <TextBox Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="8080" />
-                </StackPanel>
-            </Grid>
+            <!-- ═══ 一个框 ═══ -->
+            <TextBlock Text="源地址" Classes="field" />
+            <TextBox Text="{Binding SourceUrl, UpdateSourceTrigger=PropertyChanged}"
+                     PlaceholderText="http://192.0.2.10:8080/SB"
+                     FontFamily="Consolas, Menlo, monospace" />
 
-            <StackPanel>
-                <TextBlock Text="源地址（必填）" Classes="field" />
-                <TextBox Text="{Binding SourcePath, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="movie" />
-                <TextBlock Text="管理页里这个源的「源标识」，地址会拼成 /s/{源标识}。一条配置只连一个源，所以这一栏不能空；没有它就只能连服务端根，而根是管理页专用通道。" Classes="hint" />
-            </StackPanel>
+            <!-- 解析回显：单框必须配这个，否则"端口写错"和"源标识写错"在界面上长得一模一样 -->
+            <TextBlock Text="{Binding AddressPreview}" Classes="hint"
+                       IsVisible="{Binding !IsAddressProblem}" />
+            <TextBlock Text="{Binding AddressPreview}" Classes="hint" Foreground="#E5484D" Opacity="1"
+                       IsVisible="{Binding IsAddressProblem}" />
 
-            <StackPanel>
-                <TextBlock Text="访问令牌" Classes="field" />
-                <TextBox Text="{Binding Token, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="管理页里查看，或粘配对码自动回填；公开源留空" />
-            </StackPanel>
+            <TextBlock Text="访问令牌" Classes="field" />
+            <TextBox Text="{Binding Token, UpdateSourceTrigger=PropertyChanged}"
+                     PlaceholderText="管理页里查看；粘带 #token= 的链接会自己填进来；公开源留空" />
 
-            <StackPanel>
-                <TextBlock Text="名称（选填）" Classes="field" />
-                <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="留空就用服务端里这个源的名字" />
-            </StackPanel>
+            <TextBlock Text="名称（选填）" Classes="field" />
+            <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                     PlaceholderText="留空就用服务端里这个源的名字" />
 
-            <!-- ═══ 粘贴配对码（桌面没有摄像头，扫码换成粘贴）═══ -->
-            <StackPanel>
-                <TextBlock Text="配对码 / 带令牌的链接（选填）" Classes="field" />
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <TextBox Grid.Column="0" Text="{Binding Paste, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="False"
-                             PlaceholderText="MR1|{&quot;token&quot;:…}  或  http://192.0.2.10:8080/s/movie#token=…" />
-                    <Button Grid.Column="1" Content="回填" Command="{Binding PasteCommand}"
-                            Padding="14,6" VerticalAlignment="Stretch" />
-                </Grid>
-            </StackPanel>
-
-            <!-- 拼出来的完整地址：点连接前先看清连的是哪儿 -->
-            <TextBlock Text="{Binding AddressPreview}" Classes="hint" Margin="0,2,0,0" />
-
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,14,0,0">
                 <Button Content="连接" Command="{Binding ConnectCommand}"
                         HorizontalAlignment="Left" Padding="20,8" Classes="accent" />
                 <TextBlock Text="{Binding EditHint}" VerticalAlignment="Center" FontSize="12" Opacity="0.6"
@@ -81,7 +59,7 @@
                        IsVisible="{Binding IsError}" />
 
             <!-- ═══ 已保存的源 ═══ -->
-            <TextBlock Text="已保存的源" FontWeight="SemiBold" Margin="0,16,0,0" />
+            <TextBlock Text="已保存的源" FontWeight="SemiBold" Margin="0,18,0,0" />
             <TextBlock Text="可以同时连着多个源；这里点「连接」只是再开一个，不影响已经连着的。"
                        Classes="hint" Margin="0,0,0,2" />
 

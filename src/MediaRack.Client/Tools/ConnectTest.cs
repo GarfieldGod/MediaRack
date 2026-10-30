@@ -9,7 +9,7 @@ namespace MediaRack.Client.Tools;
 ///
 /// 守的是那条不能让的线——<b>一条配置只连一个源</b>。核心是两件事：
 /// <list type="number">
-/// <item>表单必须三段齐全，源地址留空不能让"连接"变可用；</item>
+/// <item>那一个地址框里必须能解析出源标识，只给 <c>http://主机:端口</c> 不能让"连接"变可用；</item>
 /// <item>连上的结果只能有一条源，多一条都算失败。</item>
 /// </list>
 /// 顺带把"服务端根路径确实能列出全部源"也测出来：这正是客户端必须自己堵死它的原因，
@@ -29,25 +29,56 @@ public static class ConnectTest
         Console.WriteLine($"MediaRack.Client 连接页自检 → {portalUrl}");
         Console.WriteLine();
 
-        // ── 一、表单规则（不联网）────────────────────────────────
+        // 自检会 Upsert 一条配置（要验"落库是门户地址"）。指到临时目录，别把
+        // 用户真实配置写成"测试源"——这件事已经踩过一次，补个沙箱最省心。
+        var sandbox = Path.Combine(Path.GetTempPath(), $"mediarack-connecttest-{Environment.ProcessId}");
+        Environment.SetEnvironmentVariable("MEDIARACK_HOME", sandbox);
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try { Directory.Delete(sandbox, true); } catch { /* 删不掉不影响结论 */ }
+        };
+
+        // ── 一、一个框的解析规则（不联网）───────────────────────────
         var vm = new ConnectViewModel((_, _, _, _) => { });
 
-        Say("空表单", !vm.CanConnect, $"CanConnect={vm.CanConnect}（三栏全空应是 false）");
+        Say("空表单", !vm.CanConnect, $"CanConnect={vm.CanConnect}（空地址应是 false）");
+        Say("空表单不报红", !vm.IsAddressProblem, $"IsAddressProblem={vm.IsAddressProblem}（还没开始填，别一上来就红）");
 
-        vm.Host = "127.0.0.1";
-        vm.Port = "8080";
-        Say("缺源地址", !vm.CanConnect, $"CanConnect={vm.CanConnect}（只填地址+端口仍是 false，这是这次改的核心）");
+        vm.SourceUrl = "http://127.0.0.1:8080";
+        Say("只有服务器就禁用", !vm.CanConnect && vm.IsAddressProblem,
+            $"CanConnect={vm.CanConnect}，回显「{vm.AddressPreview}」");
 
-        vm.SourcePath = "SB";
-        Say("三栏齐全", vm.CanConnect, $"CanConnect={vm.CanConnect}，预览 {vm.AddressPreview}");
-        Say("地址拼装", vm.AddressPreview == "http://127.0.0.1:8080/s/SB", vm.AddressPreview);
+        vm.SourceUrl = "http://127.0.0.1:8080/SB";
+        Say("整行粘进来就可用", vm.CanConnect, $"CanConnect={vm.CanConnect}，回显「{vm.AddressPreview}」");
+        Say("源标识补成 /s/", vm.ResolvedUrl == "http://127.0.0.1:8080/s/SB", $"{vm.ResolvedUrl}");
 
-        // 粘进来带 /s/ 前缀或首尾斜杠时不能拼成 /s/s/SB
-        vm.SourcePath = "/s/SB/";
-        Say("源地址归一化", vm.AddressPreview == "http://127.0.0.1:8080/s/SB", $"输入 /s/SB/ → {vm.AddressPreview}");
+        // 手打最常见的形态：省 scheme
+        vm.SourceUrl = "127.0.0.1:8080/SB";
+        Say("省掉 http:// 也认", vm.ResolvedUrl == "http://127.0.0.1:8080/s/SB", $"输入 127.0.0.1:8080/SB → {vm.ResolvedUrl}");
 
-        vm.SourcePath = "";
-        Say("清空源地址后禁用", !vm.CanConnect, $"CanConnect={vm.CanConnect}");
+        // 尾斜杠 / 多余的 /s/ 前缀 / 后面还跟了子路径，都不能拼成 /s/s/SB
+        vm.SourceUrl = "  http://127.0.0.1:8080/s/SB/  ";
+        Say("已有的 /s/ 不重复拼", vm.ResolvedUrl == "http://127.0.0.1:8080/s/SB", $"{vm.ResolvedUrl}");
+
+        vm.SourceUrl = "http://127.0.0.1:8080/s/SB/extra?x=1";
+        Say("子路径只取第一段", vm.ResolvedUrl == "http://127.0.0.1:8080/s/SB", $"{vm.ResolvedUrl}");
+
+        // 漏写端口不拦，但必须说出来——80 和服务端默认的 8080 不是一回事
+        vm.SourceUrl = "127.0.0.1/SB";
+        Say("漏写端口有提示", vm.CanConnect && vm.AddressPreview.Contains("没写端口"), vm.AddressPreview);
+
+        // 令牌不从地址里带走：剥出来填进令牌栏，框里只留地址
+        vm.SourceUrl = "http://127.0.0.1:8080/s/SB#token=tok123";
+        Say("带令牌的链接一次填满",
+            vm.Token == "tok123" && vm.SourceUrl == "http://127.0.0.1:8080/s/SB",
+            $"令牌「{vm.Token}」，地址 {vm.SourceUrl}");
+
+        // 配对码：判据是"以 MR1| 开头"，同步就能判可用（挑地址是点连接时才做的异步活）
+        vm.SourceUrl = "MR1|{\"token\":\"t\",\"urls\":[\"http://127.0.0.1:8080/s/SB\"]}";
+        Say("配对码也算可连", vm.CanConnect && !vm.IsAddressProblem, $"CanConnect={vm.CanConnect}");
+
+        vm.SourceUrl = "";
+        Say("清空后禁用", !vm.CanConnect, $"CanConnect={vm.CanConnect}");
 
         // ── 二、地址形态判定 ───────────────────────────────────
         Say("门户地址认得出", ApiClient.IsSourcePortalUrl("http://127.0.0.1:8080/s/SB"), "…/s/SB → true");
@@ -89,9 +120,8 @@ public static class ConnectTest
             gotUrl = entry.BaseUrl;
             api.Dispose();
         });
-        live.Host = host;
-        live.Port = port;
-        live.SourcePath = slug;
+        // 一个框：整行粘进来就是全部（前端从管理页复制到的就是这一整串）
+        live.SourceUrl = portalUrl;
         live.Token = token ?? "";
 
         await live.ConnectCommand.ExecuteAsync();
@@ -107,12 +137,12 @@ public static class ConnectTest
             Say("落库是门户地址", ApiClient.IsSourcePortalUrl(gotUrl), $"{gotUrl}");
         }
 
-        // ── 五、主页左栏「改」：四栏预填 + 进编辑态 ──────────────
+        // ── 五、主页左栏「改」：地址预填 + 进编辑态 ──────────────
         var entry = new ServerEntry { Name = "改前的名字", BaseUrl = portalUrl, Token = token };
         var edited = new ConnectViewModel((_, _, _, _) => { }, editing: entry);
-        Say("编辑态预填四栏",
-            edited.IsEditing && edited.Host == host && edited.Port == port && edited.SourcePath == slug,
-            $"IsEditing={edited.IsEditing}，{edited.Host}:{edited.Port} 源「{edited.SourcePath}」");
+        Say("编辑态预填地址",
+            edited.IsEditing && edited.SourceUrl == portalUrl && edited.Token == (token ?? ""),
+            $"IsEditing={edited.IsEditing}，地址 {edited.SourceUrl}");
         Say("编辑态按钮可用", edited.CanConnect, $"CanConnect={edited.CanConnect}");
         Say("编辑态带原名字", edited.EditHint.Contains("改前的名字"), edited.EditHint);
 

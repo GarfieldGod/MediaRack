@@ -64,8 +64,14 @@ public static class ConnectionStore
         public List<ServerEntry> Servers { get; set; } = new();
     }
 
+    /// <summary>
+    /// 配置目录。<c>MEDIARACK_HOME</c> 可把它指到别处——无头自检用临时目录，
+    /// 免得跑一次 <c>--connecttest</c> 就往用户真实配置里塞一条测试源。
+    /// </summary>
     public static string DirPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MediaRack");
+        Environment.GetEnvironmentVariable("MEDIARACK_HOME") is { Length: > 0 } custom
+            ? custom
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MediaRack");
 
     public static string FilePath => Path.Combine(DirPath, "client-servers.json");
 

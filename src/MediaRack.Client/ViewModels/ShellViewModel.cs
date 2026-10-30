@@ -65,7 +65,7 @@ public sealed class ShellViewModel : ViewModelBase, ISessionHost
     private bool _autoPlayConsumed;
     private string _title = "MediaRack";
     private string _emptyTitle = "还没有任何源";
-    private string _emptyText = "点左上角 ☰ 打开源列表，再点「＋ 添加源」：填服务器地址、源地址和访问令牌。";
+    private string _emptyText = "点左上角 ☰ 打开源列表，再点「＋ 添加源」：把管理页那一行源地址粘进来，填上访问令牌就行。";
 
     public ShellViewModel()
         : this(savedOverride: null)

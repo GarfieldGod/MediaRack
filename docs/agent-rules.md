@@ -87,7 +87,7 @@ python scripts/check/check_hygiene.py --strict    # 警告也算失败
 | `--selftest [baseUrl]` | 协议层（ApiClient 全链路） |
 | `--vmtest [baseUrl]` | 主页（切源 / 合集 / 搜索 / 续页 / 海报） |
 | `--playtest [baseUrl]` | 播放链路（起播 / 双流合成 / 进度写回） |
-| `--connecttest <源门户地址> [令牌]` | 连接页（源地址必填 / 只认门户地址 / 只能拿到一条源） |
+| `--connecttest <源门户地址> [令牌]` | 连接页（一个地址框的解析容错 / 只认门户地址 / 只能拿到一条源） |
 | `--shelltest` | 外壳骨架（空态 / 抽屉 / 连接弹层 / 我的往返），**不联网不开窗** |
 
 `--shelltest` 跑在 UI 线程上同步执行，所以不受"没有消息循环 → `Dispatcher.Post` 的活不执行"影响；

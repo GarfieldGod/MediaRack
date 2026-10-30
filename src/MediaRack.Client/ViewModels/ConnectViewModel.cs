@@ -5,24 +5,31 @@ using MediaRack.Client.Storage;
 namespace MediaRack.Client.ViewModels;
 
 /// <summary>
-/// 连接页：填四栏（服务器地址 / 端口 / 源地址 / 令牌）+ 可选的粘贴配对码，连上就入库。
+/// 连接页：<b>一个源地址框 + 令牌 + 名称</b>。把管理页「访问方式」里那一整行粘进来就行。
 ///
-/// **一条配置 = 一个源**，与 Android 的「添加源」四栏逐字段对应（地址、端口、源地址、
-/// 访问令牌就是服务端管理页「访问方式」里的四个字段）。桌面没有摄像头，扫码换成
-/// 「粘贴二维码内容」：配对码里的候选地址会并发探活，挑一个能连上的回填。
+/// **为什么是一个框**：服务端管理页给出的最小单位本来就是一条完整地址
+/// （<c>http://主机:端口/s/源标识</c>，每行带一个「复制」按钮），配对二维码里也是这一串。
+/// 拆成"服务器地址 / 端口 / 源地址"三栏，等于让用户把已经是一整行的东西自己拆开再填三遍。
+/// 桌面主路径是复制粘贴，所以合并；手机软键盘分栏各有键盘类型、主路径是扫码，那边保持四栏。
+///
+/// **令牌不能拼进地址**：它会跟着 URL 进日志、进历史。所以令牌永远是一栏；
+/// 粘进来的串里带 <c>#token=</c> 时，只在输入框里把那一段剥出来填进令牌栏，框里只留地址。
+///
+/// 一个框吃三种输入：完整地址 / 省了 scheme 的地址（<c>192.0.2.10:8080/s/movie</c>）/
+/// 配对码 <c>MR1|{"urls":[…]}</c>（多候选地址，点连接时并发探活挑一个能连上的）。
 ///
 /// 主页可以同时连着多个源，所以这里连上**不会**顶掉别的源——它只是往会话池里加一个。
 /// </summary>
 public sealed class ConnectViewModel : ViewModelBase
 {
+    private const string PairingPrefix = "MR1|";
+    private const string TokenHash = "#token=";
+
     private readonly Action<ServerEntry, List<SourceInfoDto>, ApiClient, string?> _onConnected;
     private readonly Func<string, bool> _isConnected;
-    private string _host = "";
-    private string _port = "";
-    private string _sourcePath = "";
+    private string _sourceUrl = "";
     private string _token = "";
     private string _name = "";
-    private string _paste = "";
     private string _status = "";
     private bool _isError;
     private ServerEntry? _editing;
@@ -31,7 +38,7 @@ public sealed class ConnectViewModel : ViewModelBase
     /// <param name="notice">进入页面要显示的一句话（比如"上次的源连不上了"）。</param>
     /// <param name="isConnected">某条已保存配置是不是正连着（列表里标「已连接」）。</param>
     /// <param name="editing">
-    /// 非空 = 从主页左栏某个源的「改」进来的：四栏预填成它的值，连接成功后由外壳替换掉那个会话。
+    /// 非空 = 从主页左栏某个源的「改」进来的：源地址预填成它的值，连接成功后由外壳替换掉那个会话。
     /// 与"点已保存行上的编辑"共用同一套 <see cref="IsEditing"/> 状态。
     /// </param>
     /// <param name="onCancel">
@@ -48,7 +55,6 @@ public sealed class ConnectViewModel : ViewModelBase
         _isError = isError;
 
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => CanConnect);
-        PasteCommand = new AsyncRelayCommand(ApplyPasteAsync, () => Paste.Trim().Length > 0);
         CancelEditCommand = new RelayCommand(ClearEdit, () => _editing is not null);
         CloseCommand = new RelayCommand(() => onCancel?.Invoke(), () => onCancel is not null);
 
@@ -65,83 +71,83 @@ public sealed class ConnectViewModel : ViewModelBase
 
     public ObservableCollection<SavedSource> Saved { get; } = new();
 
-    // ── 四栏 + 名称 ────────────────────────────────────────────────
+    // ── 三个字段 ───────────────────────────────────────────────────
 
-    /// <summary>服务器地址：IP 或主机名，<b>不带</b> scheme 与端口。</summary>
-    public string Host
+    /// <summary>
+    /// 源地址：<b>一整行</b>，<c>http://主机:端口/s/源标识</c>（scheme 可省）。
+    /// 粘进来的串带 <c>#token=xxx</c> 时，那一段被剥出来填进 <see cref="Token"/>，框里只留地址。
+    /// </summary>
+    public string SourceUrl
     {
-        get => _host;
-        set => SetField(ref _host, value);
+        get => _sourceUrl;
+        set
+        {
+            var text = value ?? "";
+
+            // 管理页二维码 / 带令牌的分享链接是 http://…/s/slug#token=xxx：一个框粘完就该全填好，
+            // 所以令牌先剥出来，框里只留地址（令牌留在框里会跟着 URL 进日志）。
+            var hash = text.IndexOf(TokenHash, StringComparison.Ordinal);
+            if (hash >= 0)
+            {
+                var token = text[(hash + TokenHash.Length)..].Trim();
+                text = text[..hash];
+                if (token.Length > 0) Set(ref _token, token, nameof(Token));
+            }
+
+            if (Set(ref _sourceUrl, text.Trim())) RefreshParsed();
+        }
     }
 
-    public string Port
-    {
-        get => _port;
-        set => SetField(ref _port, value);
-    }
-
-    /// <summary>源地址（slug）：管理页「访问方式」里的源标识，拼成 <c>/s/{slug}</c>。</summary>
-    public string SourcePath
-    {
-        get => _sourcePath;
-        set => SetField(ref _sourcePath, value);
-    }
-
+    /// <summary>访问令牌。公开源可以留空。</summary>
     public string Token
     {
         get => _token;
-        set => SetField(ref _token, value);
+        set => Set(ref _token, value);
     }
 
     /// <summary>展示名，可留空——留空就用服务端里这个源自己的名字。</summary>
     public string Name
     {
         get => _name;
-        set => SetField(ref _name, value);
+        set => Set(ref _name, value);
     }
 
-    /// <summary>整段配对码 / 带令牌的链接，粘进来一键回填四栏。</summary>
-    public string Paste
-    {
-        get => _paste;
-        set
-        {
-            if (Set(ref _paste, value)) PasteCommand.RaiseCanExecuteChanged();
-        }
-    }
-
-    /// <summary>四栏拼出来的地址，让人在点连接之前先看清"我要连的是哪儿"。</summary>
-    public string AddressPreview =>
-        BuildBaseUrlFromFields() ?? "（服务器地址、端口、源地址都填上后，这里显示完整地址）";
+    // ── 实时解析回显 ───────────────────────────────────────────────
 
     /// <summary>
-    /// 三栏都是硬性的。<b>源地址不许留空</b>：留空只能连服务端根路径，
-    /// 而根路径是管理页专用通道（服务端按 loopback 放行），客户端拿它就能一次列出全部源。
-    /// 一条配置只能对应一个源，所以这里没有"留空 = 连服务器"这条分支。
+    /// 一行回显：解析成功说清"要连哪儿"，失败说清"差什么"。
+    /// 单框必须配这个——否则端口写错和源标识写错在界面上长得一模一样。
     /// </summary>
-    public bool CanConnect =>
-        Host.Trim().Length > 0 && Port.Trim().Length > 0 && Slug.Length > 0;
-
-    /// <summary>源地址栏归一化后的 slug（剥掉可能被粘进来的 <c>/s/</c> 前缀与首尾斜杠）。</summary>
-    private string Slug
+    public string AddressPreview
     {
         get
         {
-            var slug = SourcePath.Trim().Trim('/');
-            if (slug.StartsWith("s/", StringComparison.Ordinal)) slug = slug[2..];
-            return slug.Trim('/');
+            if (SourceUrl.Trim().Length == 0)
+                return "把管理页「访问方式」里那一整行粘进来，例如 http://192.0.2.10:8080/movie";
+
+            if (IsPairingCode)
+                return "配对码：里面可能有好几个候选地址，点「连接」时自动挑一个能连上的";
+
+            var p = Parse();
+            if (p.Error is { } error) return "⚠ " + error;
+            return p.Note is { Length: > 0 } note ? $"将连接 {p.BaseUrl} · {note}" : $"将连接 {p.BaseUrl}";
         }
     }
 
-    /// <summary>四栏 → base URL。任何一栏缺了都返回 null（不回落根路径）。</summary>
-    private string? BuildBaseUrlFromFields()
-    {
-        var host = Host.Trim();
-        var port = Port.Trim();
-        var slug = Slug;
-        if (host.Length == 0 || port.Length == 0 || slug.Length == 0) return null;
-        return ApiClient.BuildSourceBaseUrl(host, port, slug);
-    }
+    /// <summary>回显是不是一条错误（决定它显示成红色还是灰色）。空输入不算错。</summary>
+    public bool IsAddressProblem =>
+        SourceUrl.Trim().Length > 0 && !IsPairingCode && !Parse().Ok;
+
+    /// <summary>解析出来的完整门户地址；解析不出就是 null。</summary>
+    public string? ResolvedUrl => IsPairingCode ? null : Parse().Ok ? Parse().BaseUrl : null;
+
+    /// <summary>
+    /// 能不能点连接。**源标识必须在**：只有 <c>http://主机:端口</c> 的话只能连服务端根路径，
+    /// 而根路径是管理页专用通道（一次列出全部源），客户端一律不认，不做降级。
+    /// </summary>
+    public bool CanConnect => IsPairingCode || Parse().Ok;
+
+    private bool IsPairingCode => SourceUrl.Trim().StartsWith(PairingPrefix, StringComparison.Ordinal);
 
     public string Status
     {
@@ -161,26 +167,70 @@ public sealed class ConnectViewModel : ViewModelBase
     public string EditHint => _editing is null ? "" : $"编辑中：{_editing.DisplayName}";
 
     public AsyncRelayCommand ConnectCommand { get; }
-    public AsyncRelayCommand PasteCommand { get; }
     public RelayCommand CancelEditCommand { get; }
 
     /// <summary>关掉覆盖层（右上角 ✕ / 取消）。没有外壳时（自检）就是个空命令。</summary>
     public RelayCommand CloseCommand { get; }
 
-    // ── 字段变更 ───────────────────────────────────────────────────
-
     /// <summary>
-    /// 四栏任一变化都要重算按钮状态。**这是连接按钮点不动的根因所在**：
-    /// 命令的 CanExecute 依赖输入内容，而 Avalonia 只在 CanExecuteChanged 时重查 IsEnabled——
-    /// 不通知的话按钮会永远停在初始的"空输入 = 禁用"上。
+    /// 字段一变就重算按钮状态。**这是"连接按钮点不动"的老根因**：命令的 CanExecute 依赖输入内容，
+    /// 而 Avalonia 只在 CanExecuteChanged 时重查 IsEnabled——不通知的话按钮会永远停在
+    /// 初始的"空输入 = 禁用"上。
     /// </summary>
-    private void SetField(ref string field, string value, [System.Runtime.CompilerServices.CallerMemberName] string? name = null)
+    private void RefreshParsed()
     {
-        if (!Set(ref field, value, name)) return;
         if (Status.Length > 0 && !IsError) Status = "";
         ConnectCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanConnect));
         OnPropertyChanged(nameof(AddressPreview));
+        OnPropertyChanged(nameof(IsAddressProblem));
+        OnPropertyChanged(nameof(ResolvedUrl));
+    }
+
+    // ── 地址解析 ───────────────────────────────────────────────────
+
+    /// <summary>一条源地址拆开的结果。<see cref="BaseUrl"/> 只对解析成功的有意义。</summary>
+    private readonly record struct AddressParse(
+        string Scheme, string Authority, string Host, string Port, string Slug, string? Error, string? Note)
+    {
+        public bool Ok => Error is null;
+
+        public string BaseUrl => $"{Scheme}://{Authority}/s/{Slug}";
+
+        public static AddressParse Fail(string error) => new("", "", "", "", "", error, null);
+    }
+
+    /// <summary>
+    /// 把用户粘进来的那一行拆成 (scheme, authority, 端口, 源标识)。
+    /// 容错按实际会遇到的输法来定：省 scheme、省端口、尾斜杠、漏了 <c>/s/</c> 前缀、
+    /// 带 <c>/s/slug/</c> 后面的多余路径——都按"他就是想连这个源"处理，不拿格式卡人。
+    /// </summary>
+    private AddressParse Parse()
+    {
+        var raw = SourceUrl.Trim();
+        if (raw.Length == 0) return AddressParse.Fail("还没填地址");
+        if (raw.StartsWith(PairingPrefix, StringComparison.Ordinal))
+            return AddressParse.Fail("这是配对码，点「连接」会自己挑地址");
+
+        // 手打最常见的形态是 192.0.2.10:8080/movie，没有 scheme；Uri 不认，补一个 http://
+        var text = raw.Contains("://", StringComparison.Ordinal) ? raw : "http://" + raw;
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Host.Length == 0)
+            return AddressParse.Fail("这段不是地址，要形如 http://主机:端口/源标识");
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            return AddressParse.Fail($"只支持 http / https，这条是 {uri.Scheme}");
+
+        // 源标识：/s/SB → SB；漏了 /s/ 的 /SB 也算 SB（人就是会漏）；/s/SB/xxx 只要第一段
+        var path = uri.AbsolutePath.Trim('/');
+        if (path.StartsWith("s/", StringComparison.Ordinal)) path = path[2..];
+        var slug = path.Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+        if (slug.Length == 0)
+            return AddressParse.Fail("这条地址只有服务器，缺源标识（形如 http://主机:端口/SB）——" +
+                                     "没有它就只能连服务端根，而根是管理页通道，客户端不认");
+
+        // 没写端口不拦，但要说明白：80 和服务端默认的 8080 不是一回事，不说清就是"莫名其妙连不上"
+        var note = uri.IsDefaultPort ? $"没写端口，按 {uri.Port} 算（MediaRack 默认 8080）" : null;
+
+        return new AddressParse(uri.Scheme, uri.Authority, uri.Host, uri.Port.ToString(), slug, null, note);
     }
 
     // ── 已保存列表 ─────────────────────────────────────────────────
@@ -192,7 +242,7 @@ public sealed class ConnectViewModel : ViewModelBase
             Saved.Add(new SavedSource(e, _isConnected(e.BaseUrl), UseSaved, BeginEdit, RemoveSaved));
     }
 
-    /// <summary>点已保存的行：直接连它（四栏一起回填，连接按钮此时一定是可用的）。</summary>
+    /// <summary>点已保存的行：直接连它（地址与令牌一起回填，连接按钮此时一定是可用的）。</summary>
     private void UseSaved(SavedSource row)
     {
         FillFrom(row.Entry.BaseUrl, row.Entry.Token, row.Entry.Name);
@@ -231,64 +281,10 @@ public sealed class ConnectViewModel : ViewModelBase
         IsError = false;
     }
 
-    // ── 粘贴配对码 ─────────────────────────────────────────────────
-
-    private async Task ApplyPasteAsync()
-    {
-        IsError = false;
-        var payload = PairingCode.Parse(Paste);
-        if (payload is null)
-        {
-            Fail("这段内容既不是配对码也不是地址");
-            return;
-        }
-
-        if (payload.Token is { Length: > 0 }) Token = payload.Token;
-
-        string? picked;
-        if (payload.Urls.Count == 1)
-        {
-            picked = payload.Urls[0];
-        }
-        else
-        {
-            Status = $"正在从 {payload.Urls.Count} 个候选地址里挑一个可达的…";
-            picked = await PairingCode.PickReachableBaseUrlAsync(payload.Urls, payload.Token).ConfigureAwait(true);
-        }
-
-        if (picked is null)
-        {
-            Fail($"{(payload.Urls.Count == 1 ? "这个地址" : $"{payload.Urls.Count} 个候选地址都")}连不上");
-            return;
-        }
-
-        FillFrom(picked, payload.Token, null);
-        if (Slug.Length == 0)
-        {
-            // 码里没有源地址就不是源门户的码（源门户的码一定带 /s/{slug}）。
-            // 不降级连根：根的源列表是管理页通道，客户端不该走。
-            Fail("这个码里没有源地址。请到管理页重新生成该源的二维码，或手填源地址");
-            return;
-        }
-
-        IsError = false;
-        Status = "已按配对码回填，检查无误后点「连接」";
-        ConnectCommand.RaiseCanExecuteChanged();
-    }
-
-    /// <summary>把一条 base URL 拆回四栏（编辑、点已保存行、粘到码都走这里）。</summary>
+    /// <summary>把一条 base URL 拆回三个字段（编辑、点已保存行都走这里）。</summary>
     private void FillFrom(string baseUrl, string? token, string? name)
     {
-        var (host, port, path) = ApiClient.SplitSourceBaseUrl(baseUrl);
-
-        // 源地址栏只放 slug：URL 里的 /s/ 前缀是拼地址时才加的，回填时剥掉，
-        // 否则再拼一次就变成 /s/s/movie。
-        var slug = path.TrimStart('/');
-        if (slug.StartsWith("s/", StringComparison.Ordinal)) slug = slug[2..];
-
-        Host = host;
-        Port = port;
-        SourcePath = slug;
+        SourceUrl = baseUrl;
         Token = token ?? "";
         if (!string.IsNullOrWhiteSpace(name)) Name = name!;
     }
@@ -299,16 +295,75 @@ public sealed class ConnectViewModel : ViewModelBase
     {
         IsError = false;
 
-        var baseUrl = BuildBaseUrlFromFields();
+        string? baseUrl;
+        string? token = string.IsNullOrWhiteSpace(Token) ? null : Token.Trim();
+
+        if (IsPairingCode)
+        {
+            // 配对码：一张码可能打包了 Tailscale / 内网 / 公网几个候选地址，并发探活挑第一个能连上的
+            var payload = PairingCode.Parse(SourceUrl);
+            if (payload is null)
+            {
+                Fail("这个配对码解析不出来，重新生成一张或直接粘地址");
+                return;
+            }
+
+            token ??= payload.Token;
+
+            string? picked;
+            if (payload.Urls.Count == 1)
+            {
+                picked = payload.Urls[0];
+            }
+            else
+            {
+                Status = $"正在从 {payload.Urls.Count} 个候选地址里挑一个可达的…";
+                picked = await PairingCode.PickReachableBaseUrlAsync(payload.Urls, token).ConfigureAwait(true);
+            }
+
+            if (picked is null)
+            {
+                Fail($"{(payload.Urls.Count == 1 ? "这个地址" : $"{payload.Urls.Count} 个候选地址都")}连不上");
+                return;
+            }
+
+            if (!ApiClient.IsSourcePortalUrl(picked))
+            {
+                // 码里没有源标识就不是源门户的码。不降级连根：根的源列表是管理页通道。
+                Fail("这个码里没有源地址。请到管理页重新生成该源的二维码，或直接粘「访问方式」里那一行");
+                return;
+            }
+
+            // 把挑中的地址与令牌落回可见的字段，别让人不知道到底连了哪个
+            SourceUrl = picked;
+            Token = token ?? "";
+            baseUrl = picked;
+        }
+        else
+        {
+            var parsed = Parse();
+            if (!parsed.Ok)
+            {
+                Fail(parsed.Error!);
+                return;
+            }
+
+            // 归一化后的门户地址：/s/ 前缀由这里统一加，用户漏了也补上
+            baseUrl = ApiClient.NormalizeBaseUrl(parsed.BaseUrl);
+            if (baseUrl is null)
+            {
+                Fail("地址拼不出来，检查一下主机名和端口");
+                return;
+            }
+        }
+
+        // 两个分支都给非空值；这条只是给编译器一个交代，走到这儿说明逻辑写漏了
         if (baseUrl is null)
         {
-            Fail(Slug.Length == 0
-                ? "源地址不能留空：一条配置只连一个源，地址形如 http://主机:端口/s/{源标识}"
-                : "服务器地址和端口都要填");
+            Fail("地址拼不出来，检查一下主机名和端口");
             return;
         }
 
-        var token = string.IsNullOrWhiteSpace(Token) ? null : Token.Trim();
         Status = $"正在连接 {baseUrl}…";
 
         var api = new ApiClient(baseUrl, token);
@@ -333,7 +388,7 @@ public sealed class ConnectViewModel : ViewModelBase
             if (sources.Count != 1)
             {
                 api.Dispose();
-                Fail($"这个地址返回了 {sources.Count} 个源，不是源门户地址（应形如 http://主机:端口/s/{{源标识}}）");
+                Fail($"这个地址返回了 {sources.Count} 个源，不是源门户地址（应形如 http://主机:端口/SB）");
                 return;
             }
 
